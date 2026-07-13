@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delegate Codex Agent"
+  short_description: "Run low-cost agents with bounded context"
+  default_prompt: "Use $delegate-codex-agent to delegate this bounded task to a low-cost Codex model and supervise its result."
