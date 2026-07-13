@@ -3,7 +3,7 @@
 > [!WARNING]
 > This repository is an experimental project for exploring budget-aware Codex delegation. It is not production-ready, and its interfaces, file formats, and behavior may change without notice.
 
-A Codex skill and local runner for delegating bounded repository tasks with budget-aware model routing. It supports compact context packets, dependency-aware parallel batches, isolated Git worktrees, token-usage tracking, and auditable run artifacts.
+A Codex skill centered on a deterministic, budget-aware workflow orchestrator. It supports acceptance-gated DAGs, recovery, bounded fan-out, isolated Git worktrees, token accounting, and auditable artifacts. One bounded-task mode remains available for lightweight work.
 
 ## Installation
 
@@ -45,17 +45,43 @@ The skill will be available to Codex on the next turn. The runner requires Git, 
 - `terra` handles difficult implementation and integration; batch use requires `model_reason` and is limited to one task by default.
 - `sol` is a read-only thinking delegate for architecture, ambiguity, and cross-cutting risk analysis. It requires `model_reason` and batch use must be enabled explicitly with `--max-sol-tasks` (default: `0`).
 
-## Usage
+## Two operating modes
+
+### Mode 1: workflow orchestrator (recommended)
+
+Compile a versioned workflow when work has multiple phases, dependencies, retries, approvals, writers, or meaningful parallelism:
 
 ```bash
-python3 scripts/delegate.py --help
-python3 scripts/delegate.py run --help
-python3 scripts/delegate.py batch --help
-python3 scripts/delegate.py run --spec /abs/design.json --cwd /abs/repo \
-  --model sol --model-reason "compare cross-cutting design risks" --sandbox read-only
+python3 scripts/delegate.py workflow prepare --file /abs/workflow.json --json
+python3 scripts/delegate.py workflow start --workflow /abs/workflow.json
+python3 scripts/delegate.py workflow inspect --workflow-dir /abs/workflow-run
+python3 scripts/delegate.py workflow watch --workflow-dir /abs/workflow-run
+```
+
+### Mode 2: direct bounded delegation
+
+Use `prepare`/`run` for one bounded task when a durable DAG would add unnecessary overhead:
+
+```bash
+python3 scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
+python3 scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
 ```
 
 See [`SKILL.md`](SKILL.md) for the delegation policy and command examples.
+
+## Workflow capabilities
+
+The deterministic runtime supports acceptance-gated DAGs, bounded map/reduce and iteration, durable recovery, model/token limits, approval controls, and isolated writer worktrees:
+
+```bash
+python3 scripts/delegate.py workflow prepare --file /abs/workflow.json --json
+python3 scripts/delegate.py workflow start --workflow /abs/workflow.json
+python3 scripts/delegate.py workflow inspect --workflow-dir /abs/workflow-run
+python3 scripts/delegate.py workflow control --workflow-dir /abs/workflow-run \
+  --control retry --payload '{"task_id":"task","reason":"new evidence"}'
+```
+
+Use `workflow integration-plan` to review writer changes and `workflow integrate` only with an approval object whose SHA-256 matches the plan. The runtime does not make hidden planning calls and does not automatically merge writer patches.
 
 ## Live status
 

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://delegate-codex-agent.local/schemas/worker-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result", "evidence", "changes", "verification", "risks", "recommended_next_action"],
+  "properties": {
+    "result": {"type": ["string", "object", "array"]},
+    "evidence": {"type": "string", "minLength": 1},
+    "changes": {"type": "string"},
+    "verification": {"type": "string"},
+    "risks": {"type": "string", "minLength": 1},
+    "recommended_next_action": {"type": "string", "minLength": 1}
+  }
+}

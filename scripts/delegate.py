@@ -21,6 +21,16 @@ import threading
 import time
 from typing import Any
 
+try:
+    from delegate_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
+    from delegate_agent.errors import OrchestratorError
+    from delegate_agent.worker import WorkerRequest, run_worker
+except ModuleNotFoundError:  # Executed as an absolute script outside repo-root sys.path.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from delegate_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
+    from delegate_agent.errors import OrchestratorError
+    from delegate_agent.worker import WorkerRequest, run_worker
+
 
 MODEL_IDS = {
     "luna": "gpt-5.6-luna",
@@ -712,38 +722,35 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
         task_id=getattr(args, "task_id", spec["name"]),
     )
     reporter.start()
-    command = [
-        codex_binary(), "exec", "-C", str(root), "-m", MODEL_IDS[args.model],
-        "-s", args.sandbox, "--json", "-o", str(run_dir / "result.md"), "-",
-    ]
     process: subprocess.Popen[str] | None = None
     lock_handle = None
     events_path = run_dir / "events.jsonl"
     try:
         lock_handle = worktree_lock(root, args.sandbox, getattr(args, "cancel_event", None))
-        with events_path.open("w", encoding="utf-8") as events:
-            process = subprocess.Popen(
-                command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, start_new_session=True,
-            )
+        def on_process(child: subprocess.Popen[str]) -> None:
+            nonlocal process
+            process = child
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.add(process)
             reporter.set_phase("model_running", process, pid=process.pid)
             print(f"DELEGATE_STARTED pid={process.pid} model={MODEL_IDS[args.model]}", flush=True)
-            assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(packet)
-            process.stdin.close()
-            for line in process.stdout:
-                events.write(line)
-                events.flush()
-                reporter.record_event(line)
-            exit_code = process.wait()
-            reporter.set_phase("finalizing", process)
-            if exit_code == 0 and not (run_dir / "result.md").is_file():
-                raise SpecError("codex exited successfully without producing result.md")
-            if exit_code == 0:
-                result = structured_result((run_dir / "result.md").read_text(encoding="utf-8"))
-                atomic_json(run_dir / "result.json", result)
+
+        outcome = run_worker(
+            WorkerRequest(
+                binary=(codex_binary(),), cwd=root, model=MODEL_IDS[args.model],
+                sandbox=args.sandbox, prompt=packet,
+                result_path=run_dir / "result.md", events_path=events_path,
+            ),
+            on_process=on_process,
+            on_line=reporter.record_event,
+        )
+        exit_code = outcome.exit_code
+        reporter.set_phase("finalizing", process)
+        if exit_code == 0 and not (run_dir / "result.md").is_file():
+            raise SpecError("codex exited successfully without producing result.md")
+        if exit_code == 0:
+            result = structured_result((run_dir / "result.md").read_text(encoding="utf-8"))
+            atomic_json(run_dir / "result.json", result)
     except BaseException as exc:
         if process is not None:
             terminate_process(process)
@@ -789,6 +796,104 @@ def command_prepare(args: argparse.Namespace) -> int:
         print(output)
     else:
         print(packet)
+    return 0
+
+
+def command_workflow_start(args: argparse.Namespace) -> int:
+    exit_code, run_dir, result = start_workflow(
+        args.workflow, runs_dir=args.runs_dir,
+        on_started=lambda path: print(f"WORKFLOW_DIR={path}", flush=True),
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return exit_code
+
+
+def command_workflow_inspect(args: argparse.Namespace) -> int:
+    value = inspect_workflow(args.workflow_dir)
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_workflow_resume(args: argparse.Namespace) -> int:
+    exit_code, result = resume_workflow(args.workflow_dir)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return exit_code
+
+
+def command_workflow_watch(args: argparse.Namespace) -> int:
+    return watch_workflow(args.workflow_dir, interval=args.interval, once=args.once)
+
+
+def command_workflow_prepare(args: argparse.Namespace) -> int:
+    preview = prepare_workflow(args.file)
+    if args.json:
+        print(json.dumps(preview, ensure_ascii=False, indent=2))
+    else:
+        print(f"WORKFLOW_PREVIEW name={preview['workflow']['name']} ready={str(preview['ready']).lower()}")
+        print(f"PHASES={len(preview['phases'])} ESTIMATED_RESERVE={preview['estimates']['reserve_tokens']}")
+        for warning in preview["warnings"]:
+            print(f"WARNING {warning['type']} node={warning.get('node', '-')}")
+        for error in preview["errors"]:
+            print(f"ERROR {error['type']}")
+    return 0 if preview["ready"] else 3
+
+
+def command_workflow_control(args: argparse.Namespace) -> int:
+    try:
+        payload = json.loads(args.payload) if args.payload else {}
+    except json.JSONDecodeError as exc:
+        raise SpecError(f"workflow control payload must be valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SpecError("workflow control payload must be a JSON object")
+    path = request_control(
+        args.workflow_dir, args.control, payload, request_id=args.request_id,
+    )
+    print(f"CONTROL_REQUEST={path}", flush=True)
+    return 0
+
+
+def command_workflow_integration_plan(args: argparse.Namespace) -> int:
+    raw = args.writers
+    if not args.writers.lstrip().startswith("["):
+        candidate = Path(args.writers)
+        if candidate.is_file():
+            raw = candidate.read_text(encoding="utf-8")
+    try:
+        writers = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SpecError(f"integration writers must be valid JSON: {exc}") from exc
+    if not isinstance(writers, list):
+        raise SpecError("integration writers must be a JSON array")
+    checks = None
+    if args.checks:
+        raw_checks = args.checks
+        candidate = Path(raw_checks)
+        if candidate.is_file():
+            raw_checks = candidate.read_text(encoding="utf-8")
+        try:
+            checks = json.loads(raw_checks)
+        except json.JSONDecodeError as exc:
+            raise SpecError(f"integration checks must be valid JSON: {exc}") from exc
+        if not isinstance(checks, list):
+            raise SpecError("integration checks must be a JSON array")
+    plan = plan_integration(args.repo, writers, destination=args.output, checks=checks)
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
+    return 0 if plan["ready"] else 3
+
+
+def command_workflow_integrate(args: argparse.Namespace) -> int:
+    approval = args.approval
+    if approval.lstrip().startswith("{"):
+        try:
+            approval = json.loads(approval)
+        except json.JSONDecodeError as exc:
+            raise SpecError(f"workflow approval must be valid JSON: {exc}") from exc
+    else:
+        candidate = Path(approval)
+        if candidate.is_file():
+            approval = candidate
+    result = integrate_plan(args.plan, approval)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -859,35 +964,32 @@ def command_resume(args: argparse.Namespace) -> int:
         run_dir / "status.json", state, task_id=state["name"],
     )
     reporter.start()
-    command = [
-        codex_binary(), "exec", "resume", "-m", model_id, "--json",
-        "-o", str(run_dir / "result.md"), thread_id, "-",
-    ]
     process: subprocess.Popen[str] | None = None
     lock_handle = None
     events_path = run_dir / "events.jsonl"
     try:
         lock_handle = worktree_lock(cwd, sandbox)
-        with events_path.open("w", encoding="utf-8") as events:
-            process = subprocess.Popen(
-                command, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, start_new_session=True,
-            )
+        def on_process(child: subprocess.Popen[str]) -> None:
+            nonlocal process
+            process = child
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.add(process)
             reporter.set_phase("model_running", process, pid=process.pid)
             print(f"DELEGATE_RESUMED pid={process.pid} model={model_id}", flush=True)
-            assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(feedback)
-            process.stdin.close()
-            for line in process.stdout:
-                events.write(line)
-                events.flush()
-                reporter.record_event(line)
-            exit_code = process.wait()
-            reporter.set_phase("finalizing", process)
-            if exit_code == 0 and not (run_dir / "result.md").is_file():
-                raise SpecError("codex resume exited successfully without producing result.md")
+
+        outcome = run_worker(
+            WorkerRequest(
+                binary=(codex_binary(),), cwd=cwd, model=model_id, sandbox=sandbox,
+                prompt=feedback, result_path=run_dir / "result.md", events_path=events_path,
+                resume_thread_id=thread_id,
+            ),
+            on_process=on_process,
+            on_line=reporter.record_event,
+        )
+        exit_code = outcome.exit_code
+        reporter.set_phase("finalizing", process)
+        if exit_code == 0 and not (run_dir / "result.md").is_file():
+            raise SpecError("codex resume exited successfully without producing result.md")
     except BaseException as exc:
         if process is not None:
             terminate_process(process)
@@ -1124,6 +1226,43 @@ def parser() -> argparse.ArgumentParser:
     batch.add_argument("--stop-after-total-tokens", type=int)
     batch.add_argument("--runs-dir", default=os.path.join(tempfile.gettempdir(), "codex-delegations"))
     batch.set_defaults(handler=command_batch)
+    workflow = commands.add_parser("workflow", help="run and inspect versioned workflows")
+    workflow_commands = workflow.add_subparsers(dest="workflow_command", required=True)
+    workflow_start = workflow_commands.add_parser("start", help="run a versioned workflow")
+    workflow_start.add_argument("--workflow", required=True)
+    workflow_start.add_argument("--runs-dir", default=os.path.join(tempfile.gettempdir(), "codex-workflows"))
+    workflow_start.set_defaults(handler=command_workflow_start)
+    workflow_inspect = workflow_commands.add_parser("inspect", help="show aggregate workflow status")
+    workflow_inspect.add_argument("--workflow-dir", required=True)
+    workflow_inspect.set_defaults(handler=command_workflow_inspect)
+    workflow_resume = workflow_commands.add_parser("resume", help="resume a persisted workflow")
+    workflow_resume.add_argument("--workflow-dir", required=True)
+    workflow_resume.set_defaults(handler=command_workflow_resume)
+    workflow_watch = workflow_commands.add_parser("watch", help="watch aggregate workflow status")
+    workflow_watch.add_argument("--workflow-dir", required=True)
+    workflow_watch.add_argument("--interval", type=float, default=1.0)
+    workflow_watch.add_argument("--once", action="store_true")
+    workflow_watch.set_defaults(handler=command_workflow_watch)
+    workflow_prepare = workflow_commands.add_parser("prepare", help="validate and preview a workflow without launching workers")
+    workflow_prepare.add_argument("--file", required=True)
+    workflow_prepare.add_argument("--json", action="store_true")
+    workflow_prepare.set_defaults(handler=command_workflow_prepare)
+    workflow_control = workflow_commands.add_parser("control", help="submit an external workflow control request")
+    workflow_control.add_argument("--workflow-dir", required=True)
+    workflow_control.add_argument("--control", choices=("pause", "resume", "cancel", "retry", "approve", "reject"), required=True)
+    workflow_control.add_argument("--payload")
+    workflow_control.add_argument("--request-id")
+    workflow_control.set_defaults(handler=command_workflow_control)
+    workflow_plan = workflow_commands.add_parser("integration-plan", help="build a read-only writer integration plan")
+    workflow_plan.add_argument("--repo", required=True)
+    workflow_plan.add_argument("--writers", required=True, help="JSON array or path to a JSON file")
+    workflow_plan.add_argument("--checks", help="JSON array or path to verification commands")
+    workflow_plan.add_argument("--output")
+    workflow_plan.set_defaults(handler=command_workflow_integration_plan)
+    workflow_integrate = workflow_commands.add_parser("integrate", help="apply an explicitly approved integration plan")
+    workflow_integrate.add_argument("--plan", required=True)
+    workflow_integrate.add_argument("--approval", required=True, help="approval file, JSON object, or plan SHA-256")
+    workflow_integrate.set_defaults(handler=command_workflow_integrate)
     return root
 
 
@@ -1139,7 +1278,7 @@ def main() -> int:
     args = parser().parse_args()
     try:
         return args.handler(args)
-    except (SpecError, OSError) as exc:
+    except (SpecError, OrchestratorError, OSError) as exc:
         print(f"delegate: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

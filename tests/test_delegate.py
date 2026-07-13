@@ -594,6 +594,7 @@ class SkillContractTests(unittest.TestCase):
             "result.json", "max-terra-tasks", "max-sol-tasks",
             "stop-after-total-tokens", "thinking delegate", "supervisor verification",
             "DELEGATE_HEARTBEAT", "silent", "stale",
+            "Mode 1: workflow orchestrator (default)", "Mode 2: direct bounded delegation",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, content)
