@@ -366,6 +366,7 @@ class ProgressReporter:
         self._state.setdefault("started_at", dt.datetime.now(dt.timezone.utc).isoformat())
         self._state.setdefault("phase", "preparing")
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._started_monotonic = time.monotonic()
@@ -424,9 +425,14 @@ class ProgressReporter:
             f"tokens={snapshot['usage']['total_tokens']}"
         )
 
+    def _persist(self) -> dict[str, Any]:
+        with self._write_lock:
+            snapshot = self.snapshot()
+            atomic_json(self.status_path, snapshot)
+        return snapshot
+
     def _write_heartbeat(self) -> None:
-        snapshot = self.snapshot()
-        atomic_json(self.status_path, snapshot)
+        snapshot = self._persist()
         self.emit(self._heartbeat_line(snapshot), flush=True)
 
     def _loop(self) -> None:
@@ -445,12 +451,14 @@ class ProgressReporter:
 
     def set_phase(
         self, phase: str, process: subprocess.Popen[str] | None | object = _PROCESS_UNSET,
+        **state: Any,
     ) -> None:
         with self._lock:
             self._state["phase"] = phase
+            self._state.update(state)
             if process is not _PROCESS_UNSET:
                 self._process = process  # type: ignore[assignment]
-        atomic_json(self.status_path, self.snapshot())
+        self._persist()
 
     def finish(self, status: str, exit_code: int | None, **extra: Any) -> None:
         self._stop.set()
@@ -463,7 +471,7 @@ class ProgressReporter:
                 "exit_code": exit_code,
                 "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             })
-        atomic_json(self.status_path, self.snapshot())
+        self._persist()
 
 
 def structured_result(raw: str) -> dict[str, str]:
@@ -691,9 +699,13 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
         "status": "running", "name": spec["name"], "model": MODEL_IDS[args.model],
         "model_reason": getattr(args, "model_reason", None),
         "sandbox": args.sandbox, "cwd": str(root), "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "pid": None, "exit_code": None,
+        "phase": "waiting_for_lock", "pid": None, "exit_code": None,
     }
-    atomic_json(run_dir / "status.json", state)
+    reporter = ProgressReporter(
+        run_dir / "status.json", state,
+        task_id=getattr(args, "task_id", spec["name"]),
+    )
+    reporter.start()
     command = [
         codex_binary(), "exec", "-C", str(root), "-m", MODEL_IDS[args.model],
         "-s", args.sandbox, "--json", "-o", str(run_dir / "result.md"), "-",
@@ -710,8 +722,7 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
             )
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.add(process)
-            state["pid"] = process.pid
-            atomic_json(run_dir / "status.json", state)
+            reporter.set_phase("model_running", process, pid=process.pid)
             print(f"DELEGATE_STARTED pid={process.pid} model={MODEL_IDS[args.model]}", flush=True)
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(packet)
@@ -719,7 +730,9 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
             for line in process.stdout:
                 events.write(line)
                 events.flush()
+                reporter.record_event(line)
             exit_code = process.wait()
+            reporter.set_phase("finalizing", process)
             if exit_code == 0 and not (run_dir / "result.md").is_file():
                 raise SpecError("codex exited successfully without producing result.md")
             if exit_code == 0:
@@ -728,13 +741,10 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
     except BaseException as exc:
         if process is not None:
             terminate_process(process)
-        state.update({
-            "status": "interrupted" if isinstance(exc, (KeyboardInterrupt, InterruptedError)) else "failed",
-            "exit_code": process.returncode if process else None,
-            "usage": usage_from_events(events_path),
-            "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        })
-        atomic_json(run_dir / "status.json", state)
+        reporter.finish(
+            "interrupted" if isinstance(exc, (KeyboardInterrupt, InterruptedError)) else "failed",
+            process.returncode if process else None,
+        )
         raise
     finally:
         if lock_handle is not None:
@@ -743,14 +753,9 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.discard(process)
 
-    state.update({
-        "status": "succeeded" if exit_code == 0 else "failed",
-        "exit_code": exit_code,
-        "usage": usage_from_events(events_path),
-        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    })
-    atomic_json(run_dir / "status.json", state)
-    print(f"DELEGATE_FINISHED status={state['status']} exit_code={exit_code}", flush=True)
+    final_status = "succeeded" if exit_code == 0 else "failed"
+    reporter.finish(final_status, exit_code)
+    print(f"DELEGATE_FINISHED status={final_status} exit_code={exit_code}", flush=True)
     return exit_code, run_dir
 
 
@@ -832,10 +837,14 @@ def command_resume(args: argparse.Namespace) -> int:
         "status": "running", "name": f"{previous.get('name', 'task')}-resume",
         "model": model_id, "sandbox": sandbox, "cwd": str(cwd),
         "resumed_thread_id": thread_id, "resumed_from": str(previous_dir),
-        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(), "pid": None,
+        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "phase": "waiting_for_lock", "pid": None,
         "exit_code": None,
     }
-    atomic_json(run_dir / "status.json", state)
+    reporter = ProgressReporter(
+        run_dir / "status.json", state, task_id=state["name"],
+    )
+    reporter.start()
     command = [
         codex_binary(), "exec", "resume", "-m", model_id, "--json",
         "-o", str(run_dir / "result.md"), thread_id, "-",
@@ -852,8 +861,7 @@ def command_resume(args: argparse.Namespace) -> int:
             )
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.add(process)
-            state["pid"] = process.pid
-            atomic_json(run_dir / "status.json", state)
+            reporter.set_phase("model_running", process, pid=process.pid)
             print(f"DELEGATE_RESUMED pid={process.pid} model={model_id}", flush=True)
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(feedback)
@@ -861,19 +869,18 @@ def command_resume(args: argparse.Namespace) -> int:
             for line in process.stdout:
                 events.write(line)
                 events.flush()
+                reporter.record_event(line)
             exit_code = process.wait()
+            reporter.set_phase("finalizing", process)
             if exit_code == 0 and not (run_dir / "result.md").is_file():
                 raise SpecError("codex resume exited successfully without producing result.md")
     except BaseException as exc:
         if process is not None:
             terminate_process(process)
-        state.update({
-            "status": "interrupted" if isinstance(exc, (KeyboardInterrupt, InterruptedError)) else "failed",
-            "exit_code": process.returncode if process else None,
-            "usage": usage_from_events(events_path),
-            "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        })
-        atomic_json(run_dir / "status.json", state)
+        reporter.finish(
+            "interrupted" if isinstance(exc, (KeyboardInterrupt, InterruptedError)) else "failed",
+            process.returncode if process else None,
+        )
         raise
     finally:
         if lock_handle is not None:
@@ -881,13 +888,9 @@ def command_resume(args: argparse.Namespace) -> int:
         if process is not None:
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.discard(process)
-    state.update({
-        "status": "succeeded" if exit_code == 0 else "failed", "exit_code": exit_code,
-        "usage": usage_from_events(events_path),
-        "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    })
-    atomic_json(run_dir / "status.json", state)
-    print(f"DELEGATE_FINISHED status={state['status']} exit_code={exit_code}", flush=True)
+    final_status = "succeeded" if exit_code == 0 else "failed"
+    reporter.finish(final_status, exit_code)
+    print(f"DELEGATE_FINISHED status={final_status} exit_code={exit_code}", flush=True)
     return exit_code
 
 

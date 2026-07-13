@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 
@@ -301,6 +302,213 @@ class ProgressStatusTests(unittest.TestCase):
             "status": "succeeded", "finished_at": now.isoformat(),
         }, now), "finished")
         self.assertEqual(self.delegate.health_from_status({"status": "running"}, now), "stale")
+
+    def test_new_phase_cannot_be_overwritten_by_an_older_heartbeat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status_path = Path(tmp) / "status.json"
+            heartbeat_entered = threading.Event()
+            release_heartbeat = threading.Event()
+            real_atomic_json = self.delegate.atomic_json
+
+            def controlled_atomic_json(path, value):
+                if (
+                    threading.current_thread().name == "delegate-heartbeat" and
+                    not heartbeat_entered.is_set()
+                ):
+                    heartbeat_entered.set()
+                    release_heartbeat.wait(timeout=2)
+                real_atomic_json(path, value)
+
+            self.delegate.atomic_json = controlled_atomic_json
+            reporter = self.delegate.ProgressReporter(
+                status_path, {"status": "running", "phase": "waiting_for_lock"},
+                task_id="race", interval_seconds=0.2,
+                emit=lambda line, **kwargs: None,
+            )
+            try:
+                reporter.start()
+                self.assertTrue(heartbeat_entered.wait(timeout=2))
+                phase_thread = threading.Thread(
+                    target=reporter.set_phase, args=("model_running",),
+                )
+                phase_thread.start()
+                time.sleep(0.03)
+                self.assertTrue(
+                    phase_thread.is_alive(),
+                    "phase write bypassed an older in-flight heartbeat write",
+                )
+                release_heartbeat.set()
+                phase_thread.join(timeout=2)
+                self.assertFalse(phase_thread.is_alive())
+                status = json.loads(status_path.read_text(encoding="utf-8"))
+                self.assertEqual(status["phase"], "model_running")
+            finally:
+                release_heartbeat.set()
+                reporter.finish("interrupted", None)
+                self.delegate.atomic_json = real_atomic_json
+
+    def test_finish_stops_heartbeat_before_terminal_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status_path = Path(tmp) / "status.json"
+            reporter = self.delegate.ProgressReporter(
+                status_path, {"status": "running", "phase": "model_running"},
+                task_id="finish", interval_seconds=0.01,
+                emit=lambda line, **kwargs: None,
+            )
+            reporter.start()
+            reporter.finish("succeeded", 0)
+            time.sleep(0.04)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(status["status"], "succeeded")
+        self.assertEqual(status["exit_code"], 0)
+        self.assertIsNotNone(status["finished_at"])
+
+
+class LiveStatusIntegrationTests(unittest.TestCase):
+    def test_run_reports_live_status_before_silent_child_finishes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            repo = tmp / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            fake_codex = tmp / "codex"
+            fake_codex.write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import json, pathlib, sys, time
+                args = sys.argv[1:]
+                out = pathlib.Path(args[args.index('-o') + 1])
+                sys.stdin.read()
+                print(json.dumps({'type': 'thread.started', 'thread_id': 'live'}), flush=True)
+                time.sleep(0.35)
+                out.write_text('## Result\\nDone.\\n', encoding='utf-8')
+                print(json.dumps({'type': 'turn.completed', 'usage': {
+                    'input_tokens': 100, 'cached_input_tokens': 40,
+                    'output_tokens': 20, 'reasoning_output_tokens': 7,
+                }}), flush=True)
+            """), encoding="utf-8")
+            fake_codex.chmod(0o755)
+            spec = tmp / "task.json"
+            spec.write_text(json.dumps({
+                "name": "live-demo", "objective": "wait visibly", "scope": [],
+                "context": [], "constraints": [], "acceptance": [],
+                "commands": [], "output": [],
+            }), encoding="utf-8")
+            env = os.environ.copy()
+            env["DELEGATE_CODEX_BIN"] = str(fake_codex)
+            env["DELEGATE_HEARTBEAT_SECONDS"] = "0.05"
+            process = subprocess.Popen([
+                sys.executable, str(SCRIPT), "run", "--spec", str(spec),
+                "--cwd", str(repo), "--runs-dir", str(tmp / "runs"),
+            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            assert process.stdout is not None
+            lines = []
+            run_dir = None
+            try:
+                while True:
+                    line = process.stdout.readline()
+                    self.assertTrue(line, "delegate exited before child startup")
+                    lines.append(line)
+                    if line.startswith("RUN_DIR="):
+                        run_dir = Path(line.removeprefix("RUN_DIR=").strip())
+                    if line.startswith("DELEGATE_STARTED"):
+                        break
+                self.assertIsNotNone(run_dir)
+                running = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+                self.assertEqual(running["status"], "running")
+                self.assertEqual(running["phase"], "model_running")
+                self.assertTrue(running["child_alive"])
+                self.assertEqual(running["task_id"], "live-demo")
+
+                stdout, stderr = process.communicate(timeout=5)
+                lines.append(stdout)
+                self.assertEqual(process.returncode, 0, stderr + "".join(lines))
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=5)
+
+            output = "".join(lines)
+            self.assertIn("DELEGATE_HEARTBEAT task=live-demo", output)
+            self.assertIn("phase=model_running", output)
+            final = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(final["status"], "succeeded")
+            self.assertFalse(final["child_alive"])
+            self.assertGreaterEqual(final["event_count"], 2)
+            self.assertEqual(final["usage"]["total_tokens"], 120)
+
+    def test_resume_uses_the_same_live_status_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            repo = tmp / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            previous = tmp / "previous"
+            previous.mkdir()
+            (previous / "status.json").write_text(json.dumps({
+                "status": "succeeded", "name": "original",
+                "model": "gpt-5.6-luna", "sandbox": "read-only",
+                "cwd": str(repo),
+            }), encoding="utf-8")
+            (previous / "events.jsonl").write_text(
+                json.dumps({"type": "thread.started", "thread_id": "thread-1"}) + "\n",
+                encoding="utf-8",
+            )
+            feedback = tmp / "feedback.md"
+            feedback.write_text("Check the focused failure.", encoding="utf-8")
+            fake_codex = tmp / "codex"
+            fake_codex.write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import json, pathlib, sys, time
+                args = sys.argv[1:]
+                out = pathlib.Path(args[args.index('-o') + 1])
+                sys.stdin.read()
+                print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}), flush=True)
+                time.sleep(0.3)
+                out.write_text('## Result\\nResumed.\\n', encoding='utf-8')
+                print(json.dumps({'type': 'turn.completed', 'usage': {
+                    'input_tokens': 50, 'cached_input_tokens': 10,
+                    'output_tokens': 10, 'reasoning_output_tokens': 2,
+                }}), flush=True)
+            """), encoding="utf-8")
+            fake_codex.chmod(0o755)
+            env = os.environ.copy()
+            env["DELEGATE_CODEX_BIN"] = str(fake_codex)
+            env["DELEGATE_HEARTBEAT_SECONDS"] = "0.05"
+            process = subprocess.Popen([
+                sys.executable, str(SCRIPT), "resume", "--run-dir", str(previous),
+                "--feedback-file", str(feedback),
+            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            assert process.stdout is not None
+            lines = []
+            run_dir = None
+            try:
+                while True:
+                    line = process.stdout.readline()
+                    self.assertTrue(line, "resume exited before child startup")
+                    lines.append(line)
+                    if line.startswith("RUN_DIR="):
+                        run_dir = Path(line.removeprefix("RUN_DIR=").strip())
+                    if line.startswith("DELEGATE_RESUMED"):
+                        break
+                self.assertIsNotNone(run_dir)
+                running = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+                self.assertEqual(running["phase"], "model_running")
+                self.assertTrue(running["child_alive"])
+                self.assertEqual(running["task_id"], "original-resume")
+                stdout, stderr = process.communicate(timeout=5)
+                lines.append(stdout)
+                self.assertEqual(process.returncode, 0, stderr + "".join(lines))
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=5)
+
+            self.assertIn("DELEGATE_HEARTBEAT task=original-resume", "".join(lines))
+            final = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(final["status"], "succeeded")
+            self.assertFalse(final["child_alive"])
+            self.assertEqual(final["usage"]["total_tokens"], 60)
 
 
 class SkillContractTests(unittest.TestCase):
