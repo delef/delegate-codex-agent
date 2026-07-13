@@ -1,5 +1,7 @@
 import importlib.util
 import datetime as dt
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -364,6 +366,29 @@ class ProgressStatusTests(unittest.TestCase):
         self.assertEqual(status["exit_code"], 0)
         self.assertIsNotNone(status["finished_at"])
 
+    def test_inspect_adds_health_without_mutating_status_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            status_path = run_dir / "status.json"
+            status_path.write_text(json.dumps({
+                "status": "running", "heartbeat_at": now,
+                "last_event_at": now, "child_alive": True,
+            }, indent=2) + "\n", encoding="utf-8")
+            before = status_path.read_bytes()
+            args = self.delegate.parser().parse_args([
+                "inspect", "--run-dir", str(run_dir),
+            ])
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(self.delegate.command_inspect(args), 0)
+
+            displayed = json.loads(output.getvalue())
+            after = status_path.read_bytes()
+
+        self.assertEqual(displayed["health"], "active")
+        self.assertEqual(before, after)
+
 
 class LiveStatusIntegrationTests(unittest.TestCase):
     def test_run_reports_live_status_before_silent_child_finishes(self):
@@ -509,6 +534,51 @@ class LiveStatusIntegrationTests(unittest.TestCase):
             self.assertEqual(final["status"], "succeeded")
             self.assertFalse(final["child_alive"])
             self.assertEqual(final["usage"]["total_tokens"], 60)
+
+    def test_batch_heartbeat_uses_manifest_task_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            repo = tmp / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            fake_codex = tmp / "codex"
+            fake_codex.write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import json, pathlib, sys, time
+                args = sys.argv[1:]
+                out = pathlib.Path(args[args.index('-o') + 1])
+                sys.stdin.read()
+                print(json.dumps({'type': 'thread.started', 'thread_id': 'batch'}), flush=True)
+                time.sleep(0.2)
+                out.write_text('## Result\\nDone.\\n', encoding='utf-8')
+                print(json.dumps({'type': 'turn.completed', 'usage': {
+                    'input_tokens': 10, 'cached_input_tokens': 5,
+                    'output_tokens': 2, 'reasoning_output_tokens': 1,
+                }}), flush=True)
+            """), encoding="utf-8")
+            fake_codex.chmod(0o755)
+            spec = tmp / "task.json"
+            spec.write_text(json.dumps({
+                "name": "different-spec-name", "objective": "attribute heartbeat",
+                "scope": [], "context": [], "constraints": [], "acceptance": [],
+                "commands": [], "output": [],
+            }), encoding="utf-8")
+            manifest = tmp / "manifest.json"
+            manifest.write_text(json.dumps({"tasks": [{
+                "id": "task-3", "spec": str(spec),
+            }]}), encoding="utf-8")
+            env = os.environ.copy()
+            env["DELEGATE_CODEX_BIN"] = str(fake_codex)
+            env["DELEGATE_HEARTBEAT_SECONDS"] = "0.03"
+
+            completed = subprocess.run([
+                sys.executable, str(SCRIPT), "batch", "--manifest", str(manifest),
+                "--cwd", str(repo), "--runs-dir", str(tmp / "runs"),
+            ], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertIn("DELEGATE_HEARTBEAT task=task-3", completed.stdout)
+        self.assertNotIn("DELEGATE_HEARTBEAT task=different-spec-name", completed.stdout)
 
 
 class SkillContractTests(unittest.TestCase):

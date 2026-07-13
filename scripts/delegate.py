@@ -791,7 +791,15 @@ def command_inspect(args: argparse.Namespace) -> int:
     status_path = run_dir / "status.json"
     if not status_path.is_file():
         raise SpecError(f"missing {status_path}")
-    print(status_path.read_text(encoding="utf-8"), end="")
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpecError(f"cannot read status: {exc}") from exc
+    if not isinstance(status, dict):
+        raise SpecError("status must be a JSON object")
+    displayed = dict(status)
+    displayed["health"] = health_from_status(status)
+    print(json.dumps(displayed, ensure_ascii=False, indent=2))
     result = run_dir / "result.md"
     if result.is_file():
         print("\n--- result.md ---")
@@ -954,7 +962,7 @@ def command_batch(args: argparse.Namespace) -> int:
             })
         return argparse.Namespace(
             cwd=str(task_cwd), spec=task["spec"], model=task["model"], sandbox=task["sandbox"],
-            model_reason=task["model_reason"],
+            model_reason=task["model_reason"], task_id=task["id"],
             max_context_chars=args.max_context_chars, runs_dir=str(task_runs_dir),
             max_dependency_chars=args.max_dependency_chars,
             dependency_results=dependency_results, cancel_event=cancel_event,
