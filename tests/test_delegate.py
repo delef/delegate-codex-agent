@@ -1,4 +1,5 @@
 import importlib.util
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -225,6 +226,81 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(usage["output_tokens"], 25)
         self.assertEqual(usage["reasoning_output_tokens"], 9)
         self.assertEqual(usage["total_tokens"], 155)
+
+
+class ProgressStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.delegate = load_delegate()
+
+    def test_heartbeat_interval_uses_safe_default_for_invalid_values(self):
+        self.assertEqual(self.delegate.heartbeat_seconds("0.05"), 0.05)
+        for value in (None, "", "0", "-1", "invalid"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.delegate.heartbeat_seconds(value),
+                    self.delegate.DEFAULT_HEARTBEAT_SECONDS,
+                )
+
+    def test_reporter_tracks_event_metadata_usage_without_payload(self):
+        emitted = []
+        with tempfile.TemporaryDirectory() as tmp:
+            reporter = self.delegate.ProgressReporter(
+                Path(tmp) / "status.json",
+                {"status": "running", "name": "demo"},
+                task_id="task-3",
+                interval_seconds=60,
+                emit=emitted.append,
+            )
+            reporter.record_event(json.dumps({
+                "type": "turn.completed",
+                "secret_payload": "DO_NOT_COPY",
+                "usage": {
+                    "input_tokens": 100,
+                    "cached_input_tokens": 40,
+                    "output_tokens": 20,
+                    "reasoning_output_tokens": 7,
+                },
+            }))
+            snapshot = reporter.snapshot()
+
+        self.assertEqual(snapshot["task_id"], "task-3")
+        self.assertEqual(snapshot["last_event_type"], "turn.completed")
+        self.assertEqual(snapshot["event_count"], 1)
+        self.assertEqual(snapshot["usage"]["total_tokens"], 120)
+        self.assertNotIn("DO_NOT_COPY", json.dumps(snapshot))
+
+    def test_reporter_counts_malformed_output_as_unparsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reporter = self.delegate.ProgressReporter(
+                Path(tmp) / "status.json", {"status": "running"},
+                task_id="demo", interval_seconds=60, emit=lambda line: None,
+            )
+            reporter.record_event("not-json")
+            snapshot = reporter.snapshot()
+
+        self.assertEqual(snapshot["last_event_type"], "unparsed")
+        self.assertEqual(snapshot["event_count"], 1)
+        self.assertEqual(snapshot["usage"]["total_tokens"], 0)
+
+    def test_health_classifies_active_silent_stale_and_finished(self):
+        now = dt.datetime(2026, 7, 13, 12, 0, tzinfo=dt.timezone.utc)
+        base = {
+            "status": "running",
+            "child_alive": True,
+            "heartbeat_at": (now - dt.timedelta(seconds=10)).isoformat(),
+            "last_event_at": (now - dt.timedelta(seconds=20)).isoformat(),
+        }
+        self.assertEqual(self.delegate.health_from_status(base, now), "active")
+        self.assertEqual(self.delegate.health_from_status({
+            **base, "last_event_at": (now - dt.timedelta(seconds=61)).isoformat(),
+        }, now), "silent")
+        self.assertEqual(self.delegate.health_from_status({
+            **base, "heartbeat_at": (now - dt.timedelta(seconds=46)).isoformat(),
+        }, now), "stale")
+        self.assertEqual(self.delegate.health_from_status({
+            "status": "succeeded", "finished_at": now.isoformat(),
+        }, now), "finished")
+        self.assertEqual(self.delegate.health_from_status({"status": "running"}, now), "stale")
 
 
 class SkillContractTests(unittest.TestCase):

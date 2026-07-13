@@ -29,6 +29,9 @@ MODEL_IDS = {
 REQUIRED_LISTS = ("scope", "context", "constraints", "acceptance", "commands", "output")
 DEFAULT_MAX_CONTEXT_CHARS = 40_000
 DEFAULT_MAX_DEPENDENCY_CHARS = 2_000
+DEFAULT_HEARTBEAT_SECONDS = 15.0
+ACTIVE_IDLE_SECONDS = 60
+STALE_HEARTBEAT_SECONDS = 45
 RESULT_FIELDS = ("result", "evidence", "changes", "verification", "risks", "recommended_next_action")
 ACTIVE_PROCESSES: set[subprocess.Popen[str]] = set()
 ACTIVE_LOCK = threading.Lock()
@@ -265,27 +268,34 @@ def empty_usage() -> dict[str, int]:
     }
 
 
-def usage_from_events(path: Path) -> dict[str, int]:
+def usage_from_event(event: dict[str, Any]) -> dict[str, int]:
     usage = empty_usage()
+    raw = event.get("usage") if event.get("type") == "turn.completed" else None
+    if not isinstance(raw, dict):
+        return usage
+    for field in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"):
+        value = raw.get(field, 0)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            usage[field] = value
+    usage["uncached_input_tokens"] = max(0, usage["input_tokens"] - usage["cached_input_tokens"])
+    usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+    return usage
+
+
+def usage_from_events(path: Path) -> dict[str, int]:
+    values = []
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return usage
+        return empty_usage()
     for line in lines:
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        raw = event.get("usage") if event.get("type") == "turn.completed" else None
-        if not isinstance(raw, dict):
-            continue
-        for field in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"):
-            value = raw.get(field, 0)
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                usage[field] += value
-    usage["uncached_input_tokens"] = max(0, usage["input_tokens"] - usage["cached_input_tokens"])
-    usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
-    return usage
+        if isinstance(event, dict):
+            values.append(usage_from_event(event))
+    return add_usage(values)
 
 
 def add_usage(values: list[dict[str, int]]) -> dict[str, int]:
@@ -294,6 +304,166 @@ def add_usage(values: list[dict[str, int]]) -> dict[str, int]:
         for field in total:
             total[field] += value.get(field, 0)
     return total
+
+
+def heartbeat_seconds(value: str | None = None) -> float:
+    raw = os.environ.get("DELEGATE_HEARTBEAT_SECONDS") if value is None else value
+    try:
+        seconds = float(raw) if raw else DEFAULT_HEARTBEAT_SECONDS
+    except (TypeError, ValueError):
+        return DEFAULT_HEARTBEAT_SECONDS
+    return seconds if seconds > 0 else DEFAULT_HEARTBEAT_SECONDS
+
+
+def parse_utc(value: Any) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def health_from_status(
+    status: dict[str, Any], now: dt.datetime | None = None,
+) -> str:
+    if status.get("status") != "running":
+        return "finished"
+    current = now or dt.datetime.now(dt.timezone.utc)
+    heartbeat_at = parse_utc(status.get("heartbeat_at"))
+    if heartbeat_at is None:
+        return "stale"
+    if (current - heartbeat_at).total_seconds() > STALE_HEARTBEAT_SECONDS:
+        return "stale"
+    if status.get("child_alive") is False:
+        return "stale"
+    last_event_at = parse_utc(status.get("last_event_at"))
+    idle: Any = (
+        (current - last_event_at).total_seconds()
+        if last_event_at is not None else status.get("idle_seconds", 0)
+    )
+    if isinstance(idle, (int, float)) and idle >= ACTIVE_IDLE_SECONDS:
+        return "silent"
+    return "active"
+
+
+_PROCESS_UNSET = object()
+
+
+class ProgressReporter:
+    def __init__(
+        self, status_path: Path, state: dict[str, Any], task_id: str,
+        interval_seconds: float | None = None, emit: Any = print,
+    ):
+        self.status_path = status_path
+        self.task_id = task_id
+        self.interval_seconds = interval_seconds or heartbeat_seconds()
+        self.emit = emit
+        self._state = dict(state)
+        self._state.setdefault("started_at", dt.datetime.now(dt.timezone.utc).isoformat())
+        self._state.setdefault("phase", "preparing")
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started_monotonic = time.monotonic()
+        self._last_event_monotonic: float | None = None
+        self._last_event_at: str | None = None
+        self._last_event_type: str | None = None
+        self._event_count = 0
+        self._usage = empty_usage()
+        self._process: subprocess.Popen[str] | None = None
+        self._heartbeat_error_reported = False
+
+    def record_event(self, line: str) -> None:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            value = None
+        with self._lock:
+            self._last_event_monotonic = time.monotonic()
+            self._last_event_at = dt.datetime.now(dt.timezone.utc).isoformat()
+            self._event_count += 1
+            if isinstance(value, dict):
+                event_type = value.get("type")
+                self._last_event_type = event_type if isinstance(event_type, str) else "unknown"
+                self._usage = add_usage([self._usage, usage_from_event(value)])
+            else:
+                self._last_event_type = "unparsed"
+
+    def snapshot(self) -> dict[str, Any]:
+        now_monotonic = time.monotonic()
+        now_wall = dt.datetime.now(dt.timezone.utc).isoformat()
+        with self._lock:
+            snapshot = dict(self._state)
+            elapsed = max(0, int(now_monotonic - self._started_monotonic))
+            idle_from = self._last_event_monotonic or self._started_monotonic
+            process = self._process
+            snapshot.update({
+                "task_id": self.task_id,
+                "child_alive": None if process is None else process.poll() is None,
+                "heartbeat_at": now_wall,
+                "last_event_at": self._last_event_at,
+                "last_event_type": self._last_event_type,
+                "event_count": self._event_count,
+                "elapsed_seconds": elapsed,
+                "idle_seconds": max(0, int(now_monotonic - idle_from)),
+                "usage": dict(self._usage),
+            })
+        return snapshot
+
+    def _heartbeat_line(self, snapshot: dict[str, Any]) -> str:
+        alive = snapshot["child_alive"]
+        alive_text = "unknown" if alive is None else str(alive).lower()
+        return (
+            f"DELEGATE_HEARTBEAT task={slug(self.task_id)} phase={snapshot['phase']} "
+            f"child_alive={alive_text} elapsed={snapshot['elapsed_seconds']}s "
+            f"idle={snapshot['idle_seconds']}s events={snapshot['event_count']} "
+            f"tokens={snapshot['usage']['total_tokens']}"
+        )
+
+    def _write_heartbeat(self) -> None:
+        snapshot = self.snapshot()
+        atomic_json(self.status_path, snapshot)
+        self.emit(self._heartbeat_line(snapshot), flush=True)
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                self._write_heartbeat()
+            except OSError as exc:
+                if not self._heartbeat_error_reported:
+                    self._heartbeat_error_reported = True
+                    self.emit(f"DELEGATE_HEARTBEAT_ERROR error={exc}", flush=True)
+
+    def start(self) -> None:
+        self._write_heartbeat()
+        self._thread = threading.Thread(target=self._loop, name="delegate-heartbeat", daemon=True)
+        self._thread.start()
+
+    def set_phase(
+        self, phase: str, process: subprocess.Popen[str] | None | object = _PROCESS_UNSET,
+    ) -> None:
+        with self._lock:
+            self._state["phase"] = phase
+            if process is not _PROCESS_UNSET:
+                self._process = process  # type: ignore[assignment]
+        atomic_json(self.status_path, self.snapshot())
+
+    def finish(self, status: str, exit_code: int | None, **extra: Any) -> None:
+        self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=max(1.0, self.interval_seconds + 1.0))
+        with self._lock:
+            self._state.update(extra)
+            self._state.update({
+                "status": status,
+                "exit_code": exit_code,
+                "finished_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            })
+        atomic_json(self.status_path, self.snapshot())
 
 
 def structured_result(raw: str) -> dict[str, str]:
