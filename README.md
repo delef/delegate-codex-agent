@@ -57,6 +57,27 @@ python3 scripts/delegate.py run --spec /abs/design.json --cwd /abs/repo \
 
 See [`SKILL.md`](SKILL.md) for the delegation policy and command examples.
 
+## Live status
+
+Active runs update `status.json` and emit a foreground heartbeat every 15 seconds without making additional AI calls:
+
+```text
+DELEGATE_HEARTBEAT task=think phase=model_running child_alive=true elapsed=94s idle=12s events=12 tokens=19320
+```
+
+Inspect a run for its persisted progress and derived health:
+
+```bash
+python3 scripts/delegate.py inspect --run-dir /path/from/RUN_DIR
+```
+
+- `active`: the launcher heartbeat is fresh and events are recent.
+- `silent`: the child is alive but has not emitted a recent event; this alone is not a hang.
+- `stale`: the launcher heartbeat expired and the run needs diagnosis.
+- `finished`: the run reached a terminal status.
+
+Heartbeats include only event types, counters, timing, and token usage. Event payloads and model reasoning are not copied into status.
+
 ## Development
 
 The runner itself uses only the Python standard library. The Codex system skill validator imports PyYAML, so install the development dependency in an isolated environment:

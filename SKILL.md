@@ -43,6 +43,8 @@ python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py run --spec /abs
 
 Keep runs in the foreground; poll the same PTY session. Do not use `nohup` or `&`.
 
+Read `DELEGATE_HEARTBEAT` while waiting; it reports task, phase, child state, timings, events, and tokens locally. Use `inspect` for health: `active` is fresh; `silent` is alive without recent events, not hung; `stale` means an expired heartbeat requiring diagnosis. Never terminate or retry from `silent` alone.
+
 ## Parallel batches
 
 ```json

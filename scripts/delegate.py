@@ -9,6 +9,7 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -283,7 +284,7 @@ def usage_from_event(event: dict[str, Any]) -> dict[str, int]:
 
 
 def usage_from_events(path: Path) -> dict[str, int]:
-    values = []
+    usage = empty_usage()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -294,8 +295,10 @@ def usage_from_events(path: Path) -> dict[str, int]:
         except json.JSONDecodeError:
             continue
         if isinstance(event, dict):
-            values.append(usage_from_event(event))
-    return add_usage(values)
+            delta = usage_from_event(event)
+            for field in usage:
+                usage[field] += delta[field]
+    return usage
 
 
 def add_usage(values: list[dict[str, int]]) -> dict[str, int]:
@@ -312,7 +315,7 @@ def heartbeat_seconds(value: str | None = None) -> float:
         seconds = float(raw) if raw else DEFAULT_HEARTBEAT_SECONDS
     except (TypeError, ValueError):
         return DEFAULT_HEARTBEAT_SECONDS
-    return seconds if seconds > 0 else DEFAULT_HEARTBEAT_SECONDS
+    return seconds if math.isfinite(seconds) and seconds > 0 else DEFAULT_HEARTBEAT_SECONDS
 
 
 def parse_utc(value: Any) -> dt.datetime | None:
@@ -345,7 +348,10 @@ def health_from_status(
         (current - last_event_at).total_seconds()
         if last_event_at is not None else status.get("idle_seconds", 0)
     )
-    if isinstance(idle, (int, float)) and idle >= ACTIVE_IDLE_SECONDS:
+    if (
+        status.get("child_alive") is True and
+        isinstance(idle, (int, float)) and idle >= ACTIVE_IDLE_SECONDS
+    ):
         return "silent"
     return "active"
 

@@ -237,7 +237,7 @@ class ProgressStatusTests(unittest.TestCase):
 
     def test_heartbeat_interval_uses_safe_default_for_invalid_values(self):
         self.assertEqual(self.delegate.heartbeat_seconds("0.05"), 0.05)
-        for value in (None, "", "0", "-1", "invalid"):
+        for value in (None, "", "0", "-1", "inf", "nan", "invalid"):
             with self.subTest(value=value):
                 self.assertEqual(
                     self.delegate.heartbeat_seconds(value),
@@ -300,6 +300,10 @@ class ProgressStatusTests(unittest.TestCase):
         self.assertEqual(self.delegate.health_from_status({
             **base, "heartbeat_at": (now - dt.timedelta(seconds=46)).isoformat(),
         }, now), "stale")
+        self.assertEqual(self.delegate.health_from_status({
+            **base, "phase": "waiting_for_lock", "child_alive": None,
+            "last_event_at": None, "idle_seconds": 120,
+        }, now), "active")
         self.assertEqual(self.delegate.health_from_status({
             "status": "succeeded", "finished_at": now.isoformat(),
         }, now), "finished")
@@ -589,6 +593,7 @@ class SkillContractTests(unittest.TestCase):
             "Prefer one Luna", "model_reason", "workspace-write", "worktree",
             "result.json", "max-terra-tasks", "max-sol-tasks",
             "stop-after-total-tokens", "thinking delegate", "supervisor verification",
+            "DELEGATE_HEARTBEAT", "silent", "stale",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, content)
