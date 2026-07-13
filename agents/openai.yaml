@@ -1,4 +1,4 @@
 interface:
   display_name: "Delegate Codex Agent"
-  short_description: "Run low-cost agents with bounded context"
-  default_prompt: "Use $delegate-codex-agent to delegate this bounded task to a low-cost Codex model and supervise its result."
+  short_description: "Route bounded tasks with isolated context"
+  default_prompt: "Use $delegate-codex-agent to route this bounded task to Luna, Terra, or an isolated Sol thinking delegate and supervise its result."

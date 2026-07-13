@@ -87,6 +87,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(args.max_workers, 2)
         self.assertEqual(args.max_dependency_chars, 2_000)
         self.assertEqual(args.max_terra_tasks, 1)
+        self.assertTrue(hasattr(args, "max_sol_tasks"))
+        self.assertEqual(args.max_sol_tasks, 0)
         self.assertIsNone(args.stop_after_total_tokens)
 
     def test_terra_requires_reason_and_respects_batch_limit(self):
@@ -105,6 +107,67 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(self.delegate.SpecError, "Terra task limit"):
                 self.delegate.validate_model_budget(tasks, max_terra_tasks=1)
             self.delegate.validate_model_budget(tasks, max_terra_tasks=2)
+
+    def test_sol_model_id(self):
+        self.assertIn("sol", self.delegate.MODEL_IDS)
+        self.assertEqual(self.delegate.MODEL_IDS["sol"], "gpt-5.6-sol")
+
+    def test_sol_manifest_requires_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_reason = self.write_manifest(tmp, {"tasks": [{
+                "id": "think", "spec": "task.json", "model": "sol",
+            }]})
+            with self.assertRaisesRegex(self.delegate.SpecError, "Sol.*reason"):
+                self.delegate.load_manifest(missing_reason)
+
+    def test_sol_manifest_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writable = self.write_manifest(tmp, {"tasks": [{
+                "id": "think", "spec": "task.json", "model": "sol",
+                "model_reason": "compare architecture tradeoffs",
+                "sandbox": "workspace-write",
+            }]})
+            with self.assertRaisesRegex(self.delegate.SpecError, "Sol.*read-only"):
+                self.delegate.load_manifest(writable)
+
+    def test_sol_requires_explicit_batch_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = self.write_manifest(tmp, {"tasks": [{
+                "id": "think", "spec": "task.json", "model": "sol",
+                "model_reason": "compare architecture tradeoffs outside supervisor context",
+            }]})
+            tasks = self.delegate.load_manifest(manifest)
+            with self.assertRaisesRegex(self.delegate.SpecError, "Sol task limit"):
+                self.delegate.validate_model_budget(
+                    tasks, max_terra_tasks=1, max_sol_tasks=0,
+                )
+            self.delegate.validate_model_budget(
+                tasks, max_terra_tasks=1, max_sol_tasks=1,
+            )
+
+    def test_single_sol_run_accepts_an_explicit_reason(self):
+        args = self.delegate.parser().parse_args([
+            "run", "--spec", "task.json", "--cwd", "/tmp/repo",
+            "--model", "sol", "--model-reason", "analyze competing designs",
+        ])
+        self.assertEqual(args.model, "sol")
+        self.assertEqual(args.model_reason, "analyze competing designs")
+
+    def test_single_terra_run_remains_compatible_without_reason(self):
+        self.delegate.validate_model_use(
+            "terra", None, "workspace-write", "delegate",
+        )
+
+    def test_sol_use_requires_reason_and_read_only(self):
+        with self.assertRaisesRegex(self.delegate.SpecError, "Sol.*reason"):
+            self.delegate.validate_model_use("sol", None, "read-only", "delegate")
+        with self.assertRaisesRegex(self.delegate.SpecError, "Sol.*read-only"):
+            self.delegate.validate_model_use(
+                "sol", "analyze competing designs", "workspace-write", "delegate",
+            )
+        self.delegate.validate_model_use(
+            "sol", "analyze competing designs", "read-only", "delegate",
+        )
 
 
 class ResultCompactionTests(unittest.TestCase):
@@ -170,8 +233,8 @@ class SkillContractTests(unittest.TestCase):
         self.assertLessEqual(len(content.split()), 650)
         for required in (
             "Prefer one Luna", "model_reason", "workspace-write", "worktree",
-            "result.json", "max-terra-tasks", "stop-after-total-tokens",
-            "supervisor verification",
+            "result.json", "max-terra-tasks", "max-sol-tasks",
+            "stop-after-total-tokens", "thinking delegate", "supervisor verification",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, content)

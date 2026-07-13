@@ -1,11 +1,11 @@
 ---
 name: delegate-codex-agent
-description: Use when a bounded repository task should move to a cheaper Codex model or independent tasks can save supervisor context.
+description: Use when a bounded repository task should move to another Codex model, independent tasks can save supervisor context, or deep analysis should be isolated from the main context window.
 ---
 
 # Delegate Codex Agent
 
-Keep Sol as supervisor. Delegate execution, never architecture, ambiguity, conflict resolution, final diff review, or supervisor verification.
+Keep the primary Sol as supervisor and final decision-maker. A delegated Sol is a read-only thinking delegate: use it to isolate deep analysis, not to replace supervision. Never delegate final diff review or supervisor verification.
 
 Optimize total AI cost, not agent count. Do not delegate work cheaper to finish locally. Prefer one Luna task. Add workers only for genuinely independent work that avoids duplicated discovery.
 
@@ -13,6 +13,7 @@ Optimize total AI cost, not agent count. Do not delegate work cheaper to finish 
 
 - `luna`: search, inventory, extraction, mechanical edits, focused tests, and explicit acceptance criteria.
 - `terra`: multi-file integration, migrations, concurrency, difficult debugging, or a refined retry after a concrete Luna limitation. Batch Terra tasks require `model_reason`; one is allowed by default.
+- `sol`: competing architectural options, ambiguous requirements, cross-cutting risk analysis, or a difficult decision whose exploration would crowd the supervisor context. Require `model_reason`, keep it `read-only`, request conclusions/evidence/risks instead of reasoning narration, and keep batch Sol disabled by default.
 - Never retry unchanged with a stronger model. Narrow the task or add missing evidence first.
 
 Use `read-only` for discovery/review and `workspace-write` only for authorized implementation. The launcher preserves Codex config, approvals, hooks, and repository trust.
@@ -37,6 +38,7 @@ Pass decisions, exact paths/symbols, constraints, evidence, and acceptance crite
 ```bash
 python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
 python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
+python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py run --spec /abs/design.json --cwd /abs/repo --model sol --model-reason "compare cross-cutting design risks" --sandbox read-only
 ```
 
 Keep runs in the foreground; poll the same PTY session. Do not use `nohup` or `&`.
@@ -46,17 +48,20 @@ Keep runs in the foreground; poll the same PTY session. Do not use `nohup` or `&
 ```json
 {"tasks": [
   {"id": "find", "spec": "/tmp/find.json"},
+  {"id": "think", "spec": "/tmp/design.json", "model": "sol",
+   "model_reason": "compare cross-cutting design risks outside supervisor context",
+   "depends_on": ["find"]},
   {"id": "implement", "spec": "/tmp/impl.json", "model": "terra",
    "model_reason": "multi-file integration after Luna discovery",
-   "sandbox": "workspace-write", "depends_on": ["find"]}
+   "sandbox": "workspace-write", "depends_on": ["think"]}
 ]}
 ```
 
 ```bash
-python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py batch --manifest /abs/tasks.json --cwd /abs/repo --max-workers 2 --max-terra-tasks 1 --stop-after-total-tokens 200000
+python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py batch --manifest /abs/tasks.json --cwd /abs/repo --max-workers 2 --max-terra-tasks 1 --max-sol-tasks 1 --stop-after-total-tokens 200000
 ```
 
-Defaults: Luna, read-only, shared isolation, two workers, one Terra task, and 2,000 dependency characters. Dependencies must form a DAG. Dependents receive bounded `result.json` summaries; verbose verification stays on disk. `--stop-after-total-tokens` stops pending tasks after observed usage reaches the threshold. Already-running tasks may overshoot it.
+Defaults: Luna, read-only, shared isolation, two workers, one Terra task, zero Sol tasks, and 2,000 dependency characters. Dependencies must form a DAG. Dependents receive bounded `result.json` summaries; verbose verification stays on disk. `--stop-after-total-tokens` stops pending tasks after observed usage reaches the threshold. Already-running tasks may overshoot it.
 
 Shared writers run exclusively. For truly independent writers set `"isolation":"worktree"`; each starts at `base_ref` (`HEAD` default). Clean worktrees are removed. Changed worktrees remain with status, base/head SHA, and a tracked-change patch; untracked files remain inside. Main-checkout uncommitted changes are not copied.
 

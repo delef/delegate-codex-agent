@@ -23,6 +23,7 @@ from typing import Any
 
 MODEL_IDS = {
     "luna": "gpt-5.6-luna",
+    "sol": "gpt-5.6-sol",
     "terra": "gpt-5.6-terra",
 }
 REQUIRED_LISTS = ("scope", "context", "constraints", "acceptance", "commands", "output")
@@ -36,6 +37,17 @@ ACTIVE_CANCEL_EVENTS: set[threading.Event] = set()
 
 class SpecError(ValueError):
     pass
+
+
+def validate_model_use(model: str, model_reason: Any, sandbox: str, label: str) -> None:
+    if model == "sol" and (
+        not isinstance(model_reason, str) or not model_reason.strip()
+    ):
+        raise SpecError(
+            f"{label} uses {model.title()} and requires a non-empty model reason"
+        )
+    if model == "sol" and sandbox != "read-only":
+        raise SpecError(f"{label} uses Sol, which is restricted to read-only analysis")
 
 
 def codex_binary() -> str:
@@ -180,6 +192,7 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
             raise SpecError(f"task {task_id} uses Terra and requires a non-empty model_reason")
         if sandbox not in ("read-only", "workspace-write"):
             raise SpecError(f"task {task_id} has unsupported sandbox: {sandbox}")
+        validate_model_use(model, model_reason, sandbox, f"task {task_id}")
         if isolation not in ("shared", "worktree"):
             raise SpecError(f"task {task_id} has unsupported isolation: {isolation}")
         if isolation == "worktree" and sandbox != "workspace-write":
@@ -224,14 +237,24 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
     return tasks
 
 
-def validate_model_budget(tasks: list[dict[str, Any]], max_terra_tasks: int) -> None:
+def validate_model_budget(
+    tasks: list[dict[str, Any]], max_terra_tasks: int, max_sol_tasks: int = 0,
+) -> None:
     if max_terra_tasks < 0:
         raise SpecError("max-terra-tasks must be nonnegative")
+    if max_sol_tasks < 0:
+        raise SpecError("max-sol-tasks must be nonnegative")
     terra_count = sum(task["model"] == "terra" for task in tasks)
     if terra_count > max_terra_tasks:
         raise SpecError(
             f"Terra task limit exceeded: manifest has {terra_count}, limit is {max_terra_tasks}. "
             "Reduce Terra usage or raise --max-terra-tasks explicitly"
+        )
+    sol_count = sum(task["model"] == "sol" for task in tasks)
+    if sol_count > max_sol_tasks:
+        raise SpecError(
+            f"Sol task limit exceeded: manifest has {sol_count}, limit is {max_sol_tasks}. "
+            "Reduce Sol usage or raise --max-sol-tasks explicitly"
         )
 
 
@@ -468,6 +491,9 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
     cwd = Path(args.cwd).resolve()
     root = repository_root(cwd)
     spec = load_spec(Path(args.spec).resolve())
+    validate_model_use(
+        args.model, getattr(args, "model_reason", None), args.sandbox, "delegate",
+    )
     packet = build_packet(spec, root, args.model, args.sandbox, args.max_context_chars)
     dependency_results = getattr(args, "dependency_results", [])
     if dependency_results:
@@ -493,6 +519,7 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
 
     state = {
         "status": "running", "name": spec["name"], "model": MODEL_IDS[args.model],
+        "model_reason": getattr(args, "model_reason", None),
         "sandbox": args.sandbox, "cwd": str(root), "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "pid": None, "exit_code": None,
     }
@@ -570,6 +597,9 @@ def command_prepare(args: argparse.Namespace) -> int:
     cwd = Path(args.cwd).resolve()
     root = repository_root(cwd)
     spec = load_spec(Path(args.spec).resolve())
+    validate_model_use(
+        args.model, getattr(args, "model_reason", None), args.sandbox, "delegate",
+    )
     packet = build_packet(spec, root, args.model, args.sandbox, args.max_context_chars)
     if args.output:
         output = Path(args.output).resolve()
@@ -701,7 +731,7 @@ def command_batch(args: argparse.Namespace) -> int:
     cwd = Path(args.cwd).resolve()
     root = repository_root(cwd)
     tasks = load_manifest(Path(args.manifest).resolve())
-    validate_model_budget(tasks, args.max_terra_tasks)
+    validate_model_budget(tasks, args.max_terra_tasks, args.max_sol_tasks)
     base = Path(args.runs_dir).expanduser().resolve()
     base.mkdir(parents=True, exist_ok=True)
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -751,6 +781,7 @@ def command_batch(args: argparse.Namespace) -> int:
             })
         return argparse.Namespace(
             cwd=str(task_cwd), spec=task["spec"], model=task["model"], sandbox=task["sandbox"],
+            model_reason=task["model_reason"],
             max_context_chars=args.max_context_chars, runs_dir=str(task_runs_dir),
             max_dependency_chars=args.max_dependency_chars,
             dependency_results=dependency_results, cancel_event=cancel_event,
@@ -874,6 +905,7 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--spec", required=True)
     run.add_argument("--cwd", required=True)
     run.add_argument("--model", choices=sorted(MODEL_IDS), default="luna")
+    run.add_argument("--model-reason")
     run.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
     run.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS)
     run.add_argument("--runs-dir", default=os.path.join(tempfile.gettempdir(), "codex-delegations"))
@@ -882,6 +914,7 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--spec", required=True)
     prepare.add_argument("--cwd", required=True)
     prepare.add_argument("--model", choices=sorted(MODEL_IDS), default="luna")
+    prepare.add_argument("--model-reason")
     prepare.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
     prepare.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS)
     prepare.add_argument("--output")
@@ -900,6 +933,7 @@ def parser() -> argparse.ArgumentParser:
     batch.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS)
     batch.add_argument("--max-dependency-chars", type=int, default=DEFAULT_MAX_DEPENDENCY_CHARS)
     batch.add_argument("--max-terra-tasks", type=int, default=1)
+    batch.add_argument("--max-sol-tasks", type=int, default=0)
     batch.add_argument("--stop-after-total-tokens", type=int)
     batch.add_argument("--runs-dir", default=os.path.join(tempfile.gettempdir(), "codex-delegations"))
     batch.set_defaults(handler=command_batch)
