@@ -41,7 +41,7 @@ The skill will be available to Codex on the next turn. The runner requires Git, 
 
 ## Models
 
-- `luna` is the default for discovery, mechanical work, and focused checks.
+- `luna` is the default routing role for discovery, mechanical work, and focused checks; it does not select a model ID.
 - `terra` handles difficult implementation and integration; batch use requires `model_reason` and is limited to one task by default.
 - `sol` is a read-only thinking delegate for architecture, ambiguity, and cross-cutting risk analysis. It requires `model_reason` and batch use must be enabled explicitly with `--max-sol-tasks` (default: `0`).
 
@@ -63,8 +63,8 @@ python3 scripts/delegate.py workflow watch --workflow-dir /abs/workflow-run
 Use `prepare`/`run` for one bounded task when a durable DAG would add unnecessary overhead:
 
 ```bash
-python3 scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
-python3 scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
+python3 scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --sandbox read-only
+python3 scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --sandbox read-only
 ```
 
 See [`SKILL.md`](SKILL.md) for the delegation policy and command examples.

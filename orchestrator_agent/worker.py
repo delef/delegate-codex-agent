@@ -64,7 +64,7 @@ class WorkerRequest:
 
     binary: tuple[str, ...]
     cwd: Path
-    model: str
+    model: str | None
     sandbox: str
     prompt: str
     result_path: Path
@@ -89,15 +89,18 @@ class WorkerOutcome:
 def build_command(request: WorkerRequest) -> list[str]:
     command = list(request.binary) + ["exec"]
     if request.resume_thread_id:
-        command += ["resume", "-m", request.model, "--json"]
+        command += ["resume"]
+        if request.model is not None:
+            command += ["-m", request.model]
+        command += ["--json"]
         if request.output_schema_path is not None:
             command += ["--output-schema", str(request.output_schema_path)]
         command += ["-o", str(request.result_path), request.resume_thread_id, "-"]
         return command
-    command += [
-        "-C", str(request.cwd), "-m", request.model, "-s", request.sandbox,
-        "--json",
-    ]
+    command += ["-C", str(request.cwd)]
+    if request.model is not None:
+        command += ["-m", request.model]
+    command += ["-s", request.sandbox, "--json"]
     if request.output_schema_path is not None:
         command += ["--output-schema", str(request.output_schema_path)]
     command += ["-o", str(request.result_path), "-"]

@@ -132,7 +132,7 @@ class WorkflowRuntime:
                     node = dict(node)
                     node["depends_on"] = list(task["depends_on"])
                 if task:
-                    for field in ("model", "model_reason"):
+                    for field in ("model", "model_id", "model_reason"):
                         if task.get(field) is not None:
                             node[field] = task[field]
                 return node
@@ -462,7 +462,7 @@ class WorkflowRuntime:
         try:
             outcome = run_worker(
                 WorkerRequest(
-                    binary=("codex",), cwd=execution_cwd, model=node["model"],
+                    binary=("codex",), cwd=execution_cwd, model=node.get("model_id"),
                     sandbox=node["sandbox"], prompt=build_task_prompt(
                         node["spec"], dependency_results=self._dependencies(task_id),
                         map_item=node.get("map_item"),

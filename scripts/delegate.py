@@ -32,11 +32,7 @@ except ModuleNotFoundError:  # Executed as an absolute script outside repo-root 
     from orchestrator_agent.worker import WorkerRequest, run_worker
 
 
-MODEL_IDS = {
-    "luna": "gpt-5.6-luna",
-    "sol": "gpt-5.6-sol",
-    "terra": "gpt-5.6-terra",
-}
+ROLES = {"luna", "sol", "terra"}
 REQUIRED_LISTS = ("scope", "context", "constraints", "acceptance", "commands", "output")
 DEFAULT_MAX_CONTEXT_CHARS = 40_000
 DEFAULT_MAX_DEPENDENCY_CHARS = 2_000
@@ -195,13 +191,16 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
         if not isinstance(spec, str) or not spec.strip():
             raise SpecError(f"task {task_id} spec must be a non-empty string")
         model = raw.get("model", "luna")
+        model_id = raw.get("model_id")
         model_reason = raw.get("model_reason")
         sandbox = raw.get("sandbox", "read-only")
         isolation = raw.get("isolation", "shared")
         base_ref = raw.get("base_ref", "HEAD")
         dependencies = raw.get("depends_on", [])
-        if model not in MODEL_IDS:
+        if model not in ROLES:
             raise SpecError(f"task {task_id} has unsupported model: {model}")
+        if model_id is not None and (not isinstance(model_id, str) or not model_id.strip()):
+            raise SpecError(f"task {task_id} model_id must be a non-empty string")
         if model == "terra" and (not isinstance(model_reason, str) or not model_reason.strip()):
             raise SpecError(f"task {task_id} uses Terra and requires a non-empty model_reason")
         if sandbox not in ("read-only", "workspace-write"):
@@ -220,6 +219,7 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
             resolved_spec = path.parent / resolved_spec
         tasks.append({
             "id": task_id, "spec": str(resolved_spec.resolve()), "model": model,
+            "model_id": model_id,
             "model_reason": model_reason,
             "sandbox": sandbox, "isolation": isolation, "base_ref": base_ref,
             "depends_on": dependencies,
@@ -568,7 +568,7 @@ def build_packet(spec: dict[str, Any], root: Path, model: str, sandbox: str, max
     lines = [
         "# Delegated task", "",
         f"Name: {spec['name']}",
-        f"Model: {MODEL_IDS[model]}",
+        f"Routing role: {model}",
         f"Sandbox: {sandbox}", "",
         "## Objective", "", spec["objective"].strip(), "",
     ]
@@ -711,8 +711,10 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
     (run_dir / "packet.md").write_text(packet, encoding="utf-8")
     print(f"RUN_DIR={run_dir}", flush=True)
 
+    model_id = getattr(args, "model_id", None)
     state = {
-        "status": "running", "name": spec["name"], "model": MODEL_IDS[args.model],
+        "status": "running", "name": spec["name"], "model": model_id,
+        "routing_role": args.model,
         "model_reason": getattr(args, "model_reason", None),
         "sandbox": args.sandbox, "cwd": str(root), "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "phase": "waiting_for_lock", "pid": None, "exit_code": None,
@@ -733,11 +735,11 @@ def execute_run(args: argparse.Namespace) -> tuple[int, Path]:
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.add(process)
             reporter.set_phase("model_running", process, pid=process.pid)
-            print(f"DELEGATE_STARTED pid={process.pid} model={MODEL_IDS[args.model]}", flush=True)
+            print(f"DELEGATE_STARTED pid={process.pid} model={model_id or 'configured-default'}", flush=True)
 
         outcome = run_worker(
             WorkerRequest(
-                binary=(codex_binary(),), cwd=root, model=MODEL_IDS[args.model],
+                binary=(codex_binary(),), cwd=root, model=model_id,
                 sandbox=args.sandbox, prompt=packet,
                 result_path=run_dir / "result.md", events_path=events_path,
             ),
@@ -942,7 +944,7 @@ def command_resume(args: argparse.Namespace) -> int:
     model_id = previous.get("model")
     cwd = Path(previous.get("cwd", "")).resolve()
     sandbox = previous.get("sandbox")
-    if model_id not in MODEL_IDS.values() or sandbox not in ("read-only", "workspace-write") or not cwd.is_dir():
+    if (model_id is not None and not isinstance(model_id, str)) or sandbox not in ("read-only", "workspace-write") or not cwd.is_dir():
         raise SpecError("previous status has unsupported model, sandbox, or cwd")
     thread_id = thread_id_from_events(previous_dir / "events.jsonl")
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -1034,7 +1036,8 @@ def command_batch(args: argparse.Namespace) -> int:
     states: dict[str, dict[str, Any]] = {}
     for task in tasks:
         states[task["id"]] = {
-            "id": task["id"], "status": "pending", "model": MODEL_IDS[task["model"]],
+            "id": task["id"], "status": "pending", "model": task["model_id"],
+            "routing_role": task["model"],
             "model_reason": task["model_reason"],
             "sandbox": task["sandbox"], "isolation": task["isolation"],
             "depends_on": task["depends_on"],
@@ -1069,7 +1072,7 @@ def command_batch(args: argparse.Namespace) -> int:
                 "base_sha": metadata["base_sha"],
             })
         return argparse.Namespace(
-            cwd=str(task_cwd), spec=task["spec"], model=task["model"], sandbox=task["sandbox"],
+            cwd=str(task_cwd), spec=task["spec"], model=task["model"], model_id=task["model_id"], sandbox=task["sandbox"],
             model_reason=task["model_reason"], task_id=task["id"],
             max_context_chars=args.max_context_chars, runs_dir=str(task_runs_dir),
             max_dependency_chars=args.max_dependency_chars,
@@ -1193,7 +1196,8 @@ def parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="build context and run a foreground delegate")
     run.add_argument("--spec", required=True)
     run.add_argument("--cwd", required=True)
-    run.add_argument("--model", choices=sorted(MODEL_IDS), default="luna")
+    run.add_argument("--model", choices=sorted(ROLES), default="luna", help="routing role, not a model ID")
+    run.add_argument("--model-id", help="real Codex model ID; omit to inherit Codex configuration")
     run.add_argument("--model-reason")
     run.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
     run.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS)
@@ -1202,7 +1206,8 @@ def parser() -> argparse.ArgumentParser:
     prepare = commands.add_parser("prepare", help="validate and render context without calling Codex")
     prepare.add_argument("--spec", required=True)
     prepare.add_argument("--cwd", required=True)
-    prepare.add_argument("--model", choices=sorted(MODEL_IDS), default="luna")
+    prepare.add_argument("--model", choices=sorted(ROLES), default="luna", help="routing role, not a model ID")
+    prepare.add_argument("--model-id", help="real Codex model ID; omit to inherit Codex configuration")
     prepare.add_argument("--model-reason")
     prepare.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
     prepare.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS)

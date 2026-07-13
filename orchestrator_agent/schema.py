@@ -121,6 +121,9 @@ def _validate_node(raw: Any, index: int, base: Path, node_ids: set[str], workflo
         model = _nonempty_string(raw.get("model", "luna"), f"{label}.model")
         if model not in MODELS:
             raise _error(f"{label}.model is unsupported: {model}")
+        model_id = raw.get("model_id")
+        if model_id is not None:
+            model_id = _nonempty_string(model_id, f"{label}.model_id")
         sandbox = _nonempty_string(raw.get("sandbox", "read-only"), f"{label}.sandbox")
         if sandbox not in SANDBOXES:
             raise _error(f"{label}.sandbox is unsupported: {sandbox}")
@@ -170,7 +173,7 @@ def _validate_node(raw: Any, index: int, base: Path, node_ids: set[str], workflo
             escalation_reason = None
             escalate_on = []
         result.update({
-            "model": model, "sandbox": sandbox, "isolation": isolation,
+            "model": model, "model_id": model_id, "sandbox": sandbox, "isolation": isolation,
             "model_reason": reason, "budget": {"reserve_tokens": reserve, "hard_tokens": hard},
             "retry": {
                 **retry, "max_attempts": attempts, "retry_on": list(dict.fromkeys(retry_on)),

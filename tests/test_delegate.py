@@ -112,9 +112,8 @@ class ManifestTests(unittest.TestCase):
                 self.delegate.validate_model_budget(tasks, max_terra_tasks=1)
             self.delegate.validate_model_budget(tasks, max_terra_tasks=2)
 
-    def test_sol_model_id(self):
-        self.assertIn("sol", self.delegate.MODEL_IDS)
-        self.assertEqual(self.delegate.MODEL_IDS["sol"], "gpt-5.6-sol")
+    def test_routing_roles_are_explicit(self):
+        self.assertEqual(self.delegate.ROLES, {"luna", "terra", "sol"})
 
     def test_sol_manifest_requires_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -476,7 +475,7 @@ class LiveStatusIntegrationTests(unittest.TestCase):
             previous.mkdir()
             (previous / "status.json").write_text(json.dumps({
                 "status": "succeeded", "name": "original",
-                "model": "gpt-5.6-luna", "sandbox": "read-only",
+                "model": None, "sandbox": "read-only",
                 "cwd": str(repo),
             }), encoding="utf-8")
             (previous / "events.jsonl").write_text(
@@ -679,7 +678,7 @@ class BatchIntegrationTests(unittest.TestCase):
             batch_dir = Path(batch_line.removeprefix("BATCH_DIR="))
             summary = json.loads((batch_dir / "batch-status.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "succeeded")
-            self.assertTrue(all(task["model"] == "gpt-5.6-luna" for task in summary["tasks"]))
+            self.assertTrue(all(task["model"] is None for task in summary["tasks"]))
             self.assertEqual(summary["usage"]["total_tokens"], 360)
             self.assertTrue(all(task["usage"]["total_tokens"] == 120 for task in summary["tasks"]))
             writer = next(task for task in summary["tasks"] if task["id"] == "write")

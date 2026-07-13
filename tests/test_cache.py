@@ -21,9 +21,11 @@ class CacheTests(unittest.TestCase):
                     "sandbox": "read-only", "isolation": "shared", "depends_on": [], "checks": []}
             first = task_fingerprint(node, cwd=root)
             second = task_fingerprint(node, cwd=root, dependency_results={"dep": {"result": "ok"}})
+            explicit_model = task_fingerprint({**node, "model_id": "available-model"}, cwd=root)
             spec.write_text('{"objective":"two"}', encoding="utf-8")
             third = task_fingerprint(node, cwd=root)
         self.assertNotEqual(first, second)
+        self.assertNotEqual(first, explicit_model)
         self.assertNotEqual(first, third)
 
     def test_cache_round_trip_and_tamper_detection(self):

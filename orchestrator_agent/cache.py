@@ -84,12 +84,12 @@ def task_fingerprint(
         "node": {
             key: node.get(key)
             for key in (
-                "kind", "spec", "model", "sandbox", "isolation", "depends_on", "checks",
+                "kind", "spec", "model", "model_id", "sandbox", "isolation", "depends_on", "checks",
                 "map_item", "map_key", "map_parent",
             )
         },
         "spec_sha256": spec_hash,
-        "model": node.get("model"),
+        "model_id": node.get("model_id"),
         "base_commit": _git_head(Path(cwd)),
         "agents": _agents_hashes(Path(cwd)),
         "dependency_results": {

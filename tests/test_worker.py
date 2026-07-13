@@ -26,9 +26,17 @@ output.write_text("result", encoding="utf-8")
 
 
 class WorkerTests(unittest.TestCase):
+    def test_build_command_omits_model_flag_for_configured_default(self):
+        request = WorkerRequest(
+            binary=("codex",), cwd=Path("/repo"), model=None, sandbox="read-only",
+            prompt="hello", result_path=Path("/tmp/result.md"), events_path=Path("/tmp/events"),
+        )
+        command = build_command(request)
+        self.assertNotIn("-m", command)
+
     def test_build_command_uses_argv_and_schema(self):
         request = WorkerRequest(
-            binary=("codex",), cwd=Path("/repo"), model="gpt-luna", sandbox="read-only",
+            binary=("codex",), cwd=Path("/repo"), model="available-model", sandbox="read-only",
             prompt="hello", result_path=Path("/tmp/result.md"), events_path=Path("/tmp/events"),
             output_schema_path=Path("/schemas/result.json"),
         )
@@ -39,7 +47,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_resume_command_keeps_thread_id(self):
         request = WorkerRequest(
-            binary=("codex",), cwd=Path("/repo"), model="gpt-luna", sandbox="read-only",
+            binary=("codex",), cwd=Path("/repo"), model="available-model", sandbox="read-only",
             prompt="feedback", result_path=Path("/tmp/result.md"), events_path=Path("/tmp/events"),
             resume_thread_id="thread-1",
         )
@@ -54,7 +62,7 @@ class WorkerTests(unittest.TestCase):
             binary.write_text(FAKE_CODEX, encoding="utf-8")
             binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
             request = WorkerRequest(
-                binary=(str(binary),), cwd=root, model="gpt-luna", sandbox="read-only",
+                binary=(str(binary),), cwd=root, model="available-model", sandbox="read-only",
                 prompt="hello", result_path=root / "result.md", events_path=root / "events.jsonl",
             )
             processes = []
@@ -81,7 +89,7 @@ class WorkerTests(unittest.TestCase):
             )
             binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
             request = WorkerRequest(
-                binary=(str(binary),), cwd=root, model="gpt-luna", sandbox="read-only",
+                binary=(str(binary),), cwd=root, model="available-model", sandbox="read-only",
                 prompt="hello", result_path=root / "result.md", events_path=root / "events.jsonl",
                 hard_tokens=5,
             )
