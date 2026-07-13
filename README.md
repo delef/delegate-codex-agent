@@ -47,3 +47,14 @@ python3 scripts/delegate.py batch --help
 ```
 
 See [`SKILL.md`](SKILL.md) for the delegation policy and command examples.
+
+## Development
+
+The runner itself uses only the Python standard library. The Codex system skill validator imports PyYAML, so install the development dependency in an isolated environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" .
+.venv/bin/python -m unittest -v tests/test_delegate.py
+```
