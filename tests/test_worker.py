@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from delegate_agent.worker import WorkerRequest, build_command, check_capabilities, run_worker
+from orchestrator_agent.worker import WorkerRequest, build_command, check_capabilities, run_worker
 
 
 FAKE_CODEX = r'''#!/usr/bin/env python3

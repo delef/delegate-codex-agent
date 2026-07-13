@@ -56,7 +56,7 @@ The project may call itself an orchestrator only when all of these scenarios pas
 ## Target file structure
 
 ```text
-delegate_agent/
+orchestrator_agent/
   __init__.py          Public package metadata
   cli.py               Argument parsing and command dispatch
   errors.py            User-facing exception types
@@ -113,7 +113,7 @@ Only the active scheduler writes `state/events.jsonl`. Other CLI processes submi
 
 ## Implementation checkpoint
 
-The current implementation slice in `delegate_agent/` is covered by tests: version-1 schema validation, explicit state transitions, append-only journal replay with durable dynamic task additions, atomic snapshots, control requests, the shared Codex worker adapter, result/command/scope gates, accepted-only dependency scheduling, budget reservations with live hard-limit termination, status projection, recovery reconciliation, cancellation/pause/resume/retry runtime control, evidence-driven Luna-to-Terra escalation with an explicit reason and model limits, artifact manifests, bounded evidence-driven retries with attempt artifacts, accepted read-only result caching, deterministic condition nodes with branch blocking, independent check nodes, bounded map/reduce fan-out/fan-in, bounded `repeat_until`, managed writer worktrees with diff/patch manifests, read-only integration planning, explicitly approved patch application with post-merge verification commands, approval-gate controls, lifecycle hooks, toolbar/watch status output, and a no-worker workflow preview. Direct `run` and `resume` commands use the shared worker adapter.
+The current implementation slice in `orchestrator_agent/` is covered by tests: version-1 schema validation, explicit state transitions, append-only journal replay with durable dynamic task additions, atomic snapshots, control requests, the shared Codex worker adapter, result/command/scope gates, accepted-only dependency scheduling, budget reservations with live hard-limit termination, status projection, recovery reconciliation, cancellation/pause/resume/retry runtime control, evidence-driven Luna-to-Terra escalation with an explicit reason and model limits, artifact manifests, bounded evidence-driven retries with attempt artifacts, accepted read-only result caching, deterministic condition nodes with branch blocking, independent check nodes, bounded map/reduce fan-out/fan-in, bounded `repeat_until`, managed writer worktrees with diff/patch manifests, read-only integration planning, explicitly approved patch application with post-merge verification commands, approval-gate controls, lifecycle hooks, toolbar/watch status output, and a no-worker workflow preview. Direct `run` and `resume` commands use the shared worker adapter.
 
 Writer work is preserved as reviewable artifacts and never auto-merged. Goal decomposition remains a primary-Codex responsibility: `workflow prepare` validates and previews a supplied workflow without adding a hidden planner call. A dedicated black-box scenario suite and removal of duplicated compatibility internals remain follow-up hardening work.
 
@@ -151,10 +151,10 @@ Any future backend migration must be implemented by replaying versioned journal 
 
 **Files:**
 
-- Create: `delegate_agent/__init__.py`
-- Create: `delegate_agent/errors.py`
-- Create: `delegate_agent/models.py`
-- Create: `delegate_agent/schema.py`
+- Create: `orchestrator_agent/__init__.py`
+- Create: `orchestrator_agent/errors.py`
+- Create: `orchestrator_agent/models.py`
+- Create: `orchestrator_agent/schema.py`
 - Create: `tests/test_schema.py`
 
 - [ ] Define task states:
@@ -223,7 +223,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/store.py`
+- Create: `orchestrator_agent/store.py`
 - Create: `tests/test_store.py`
 
 - [ ] Define a `StateStore` protocol so scheduling, gates, budget, status, and recovery do not depend on the persistence backend.
@@ -246,7 +246,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/artifacts.py`
+- Create: `orchestrator_agent/artifacts.py`
 - Modify: `scripts/delegate.py`
 - Create: `tests/test_artifacts.py`
 
@@ -262,7 +262,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/worker.py`
+- Create: `orchestrator_agent/worker.py`
 - Modify: `scripts/delegate.py`
 - Create: `tests/test_worker.py`
 
@@ -283,7 +283,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/gates.py`
+- Create: `orchestrator_agent/gates.py`
 - Create: `schemas/worker-result.schema.json`
 - Create: `tests/test_gates.py`
 
@@ -301,8 +301,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/schema.py`
-- Modify: `delegate_agent/gates.py`
+- Modify: `orchestrator_agent/schema.py`
+- Modify: `orchestrator_agent/gates.py`
 - Modify: `tests/test_gates.py`
 
 - [ ] Accept command checks only as an argv array plus `cwd`, `timeout_seconds`, and an optional list of inherited environment keys.
@@ -320,8 +320,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/gates.py`
-- Modify: `delegate_agent/worker.py`
+- Modify: `orchestrator_agent/gates.py`
+- Modify: `orchestrator_agent/worker.py`
 - Modify: `tests/test_gates.py`
 
 - [ ] Capture base commit, tracked diff, untracked paths, and pre-existing dirty paths before a writer starts.
@@ -337,7 +337,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/scheduler.py`
+- Create: `orchestrator_agent/scheduler.py`
 - Create: `tests/test_scheduler.py`
 
 - [ ] Mark a task ready only when every dependency is `accepted`.
@@ -357,9 +357,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/budget.py`
+- Create: `orchestrator_agent/budget.py`
 - Create: `tests/test_budget.py`
-- Modify: `delegate_agent/scheduler.py`
+- Modify: `orchestrator_agent/scheduler.py`
 
 - [ ] Require `reserve_tokens` and `hard_tokens` to be positive with reserve no greater than hard.
 - [ ] Atomically reserve before transitioning a task to running.
@@ -375,8 +375,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/worker.py`
-- Modify: `delegate_agent/budget.py`
+- Modify: `orchestrator_agent/worker.py`
+- Modify: `orchestrator_agent/budget.py`
 - Modify: `tests/test_budget.py`
 
 - [ ] Persist usage from each completed-turn event immediately enough for scheduler decisions without rewriting full event history.
@@ -392,8 +392,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/schema.py`
-- Modify: `delegate_agent/scheduler.py`
+- Modify: `orchestrator_agent/schema.py`
+- Modify: `orchestrator_agent/scheduler.py`
 - Create: `tests/test_retry.py`
 
 - [ ] Support `max_attempts`, defaulting to one.
@@ -411,9 +411,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/cache.py`
+- Create: `orchestrator_agent/cache.py`
 - Create: `tests/test_cache.py`
-- Modify: `delegate_agent/scheduler.py`
+- Modify: `orchestrator_agent/scheduler.py`
 
 - [ ] Cache only accepted read-only tasks in the first release.
 - [ ] Fingerprint schema version, normalized spec, model, base commit, context file hashes, dependency result hashes, and applicable `AGENTS.md` hashes.
@@ -432,9 +432,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/recovery.py`
+- Create: `orchestrator_agent/recovery.py`
 - Create: `tests/test_recovery.py`
-- Modify: `delegate_agent/scheduler.py`
+- Modify: `orchestrator_agent/scheduler.py`
 
 - [ ] Validate a stored PID using process start metadata before treating it as the original worker.
 - [ ] On restart, preserve accepted tasks, recover completed artifacts, mark missing active children interrupted, and release abandoned reservations.
@@ -449,7 +449,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/cli.py`
+- Create: `orchestrator_agent/cli.py`
 - Modify: `scripts/delegate.py`
 - Create: `tests/test_cli.py`
 
@@ -467,9 +467,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/status.py`
+- Create: `orchestrator_agent/status.py`
 - Create: `tests/test_status.py`
-- Modify: `delegate_agent/cli.py`
+- Modify: `orchestrator_agent/cli.py`
 
 - [ ] Emit a versioned status object containing workflow state, active/pending/blocked counts, task summaries, budget used/reserved/limit, current blockers, and next runnable task.
 - [ ] Keep status generation read-only and derive health without mutating control state.
@@ -488,9 +488,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/workflow.py`
+- Create: `orchestrator_agent/workflow.py`
 - Create: `tests/test_workflow.py`
-- Modify: `delegate_agent/scheduler.py`
+- Modify: `orchestrator_agent/scheduler.py`
 
 - [ ] Move existing DAG validation and readiness logic behind a `WorkflowRuntime` interface.
 - [ ] Support `agent`, `check`, and `approval` node kinds first.
@@ -504,8 +504,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/schema.py`
-- Modify: `delegate_agent/workflow.py`
+- Modify: `orchestrator_agent/schema.py`
+- Modify: `orchestrator_agent/workflow.py`
 - Modify: `tests/test_workflow.py`
 
 - [ ] Support deterministic comparisons against normalized result fields through JSON Pointer: `exists`, `equals`, `not_equals`, `contains`, and numeric comparisons.
@@ -520,8 +520,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/schema.py`
-- Modify: `delegate_agent/workflow.py`
+- Modify: `orchestrator_agent/schema.py`
+- Modify: `orchestrator_agent/workflow.py`
 - Modify: `tests/test_workflow.py`
 
 - [ ] Add a `map` node that reads an array from an accepted result using JSON Pointer.
@@ -538,8 +538,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/schema.py`
-- Modify: `delegate_agent/workflow.py`
+- Modify: `orchestrator_agent/schema.py`
+- Modify: `orchestrator_agent/workflow.py`
 - Modify: `tests/test_workflow.py`
 
 - [ ] Add `repeat_until` with `max_iterations`, a task template, a deterministic condition, and a normalized progress fingerprint.
@@ -559,8 +559,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/artifacts.py`
-- Create: `delegate_agent/integration.py`
+- Modify: `orchestrator_agent/artifacts.py`
+- Create: `orchestrator_agent/integration.py`
 - Create: `tests/test_integration.py`
 
 - [ ] Produce `changes.json` listing modified, deleted, renamed, and untracked files with hashes.
@@ -575,7 +575,7 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/integration.py`
+- Modify: `orchestrator_agent/integration.py`
 - Modify: `tests/test_integration.py`
 
 - [ ] Compare accepted writer scopes and actual changed paths before integration.
@@ -591,8 +591,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/integration.py`
-- Modify: `delegate_agent/cli.py`
+- Modify: `orchestrator_agent/integration.py`
+- Modify: `orchestrator_agent/cli.py`
 - Modify: `tests/test_integration.py`
 
 - [ ] Add `workflow integrate --plan ... --approval ...`.
@@ -613,8 +613,8 @@ Example version-1 workflow:
 
 **Files:**
 
-- Modify: `delegate_agent/cli.py`
-- Modify: `delegate_agent/schema.py`
+- Modify: `orchestrator_agent/cli.py`
+- Modify: `orchestrator_agent/schema.py`
 - Create: `tests/test_prepare_workflow.py`
 
 - [ ] Add `workflow prepare --file ...` that validates, expands static nodes, estimates reservations, reports model routing, and prints the planned phases without launching Codex.
@@ -650,9 +650,9 @@ Example version-1 workflow:
 
 **Files:**
 
-- Create: `delegate_agent/hooks.py`
+- Create: `orchestrator_agent/hooks.py`
 - Create: `tests/test_hooks.py`
-- Modify: `delegate_agent/schema.py`
+- Modify: `orchestrator_agent/schema.py`
 
 - [ ] Support `task_created`, `task_completed`, `task_rejected`, `worker_idle`, `budget_threshold`, `before_integration`, and `after_integration` hooks.
 - [ ] Pass versioned JSON through stdin and accept no model reasoning or event payloads.
@@ -704,7 +704,7 @@ Example version-1 workflow:
 **Files:**
 
 - Modify: `scripts/delegate.py`
-- Modify: `delegate_agent/cli.py`
+- Modify: `orchestrator_agent/cli.py`
 - Modify: `tests/test_legacy.py`
 
 - [ ] Replace legacy implementations with adapters to the package after behavior parity is proven.
@@ -720,7 +720,7 @@ Run:
 
 ```bash
 .venv/bin/python -m unittest -v
-.venv/bin/python -m py_compile scripts/delegate.py delegate_agent/*.py tests/*.py
+.venv/bin/python -m py_compile scripts/delegate.py orchestrator_agent/*.py tests/*.py
 .venv/bin/python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" .
 git diff --check
 ```

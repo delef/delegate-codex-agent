@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delegate_agent.cli import inspect_workflow, request_control
-from delegate_agent.schema import normalize_workflow
-from delegate_agent.store import JournalStateStore
+from orchestrator_agent.cli import inspect_workflow, request_control
+from orchestrator_agent.schema import normalize_workflow
+from orchestrator_agent.store import JournalStateStore
 
 
 class CliTests(unittest.TestCase):

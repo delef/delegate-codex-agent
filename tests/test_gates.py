@@ -3,7 +3,7 @@ import stat
 import tempfile
 import unittest
 
-from delegate_agent.gates import check_diff_scope, run_checks, run_command_check, validate_result
+from orchestrator_agent.gates import check_diff_scope, run_checks, run_command_check, validate_result
 
 
 VALID = {

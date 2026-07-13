@@ -22,14 +22,14 @@ import time
 from typing import Any
 
 try:
-    from delegate_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
-    from delegate_agent.errors import OrchestratorError
-    from delegate_agent.worker import WorkerRequest, run_worker
+    from orchestrator_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
+    from orchestrator_agent.errors import OrchestratorError
+    from orchestrator_agent.worker import WorkerRequest, run_worker
 except ModuleNotFoundError:  # Executed as an absolute script outside repo-root sys.path.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from delegate_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
-    from delegate_agent.errors import OrchestratorError
-    from delegate_agent.worker import WorkerRequest, run_worker
+    from orchestrator_agent.cli import integrate_plan, inspect_workflow, plan_integration, prepare_workflow, request_control, resume_workflow, start_workflow, watch_workflow
+    from orchestrator_agent.errors import OrchestratorError
+    from orchestrator_agent.worker import WorkerRequest, run_worker
 
 
 MODEL_IDS = {

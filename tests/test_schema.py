@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delegate_agent.errors import SchemaError
-from delegate_agent.models import TaskState, WorkflowState, can_transition_task, can_transition_workflow
-from delegate_agent.schema import load_workflow, normalize_workflow
+from orchestrator_agent.errors import SchemaError
+from orchestrator_agent.models import TaskState, WorkflowState, can_transition_task, can_transition_workflow
+from orchestrator_agent.schema import load_workflow, normalize_workflow
 
 
 def workflow_value(**overrides):

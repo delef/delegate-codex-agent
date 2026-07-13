@@ -2,8 +2,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delegate_agent.artifacts import build_manifest, write_manifest
-from delegate_agent.errors import StateError
+from orchestrator_agent.artifacts import build_manifest, write_manifest
+from orchestrator_agent.errors import StateError
 
 
 class ArtifactTests(unittest.TestCase):

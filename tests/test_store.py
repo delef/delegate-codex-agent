@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from delegate_agent.errors import CorruptJournalError, StateError
-from delegate_agent.schema import normalize_workflow
-from delegate_agent.store import JournalStateStore, submit_control_request
+from orchestrator_agent.errors import CorruptJournalError, StateError
+from orchestrator_agent.schema import normalize_workflow
+from orchestrator_agent.store import JournalStateStore, submit_control_request
 
 
 def workflow_value():
@@ -77,14 +77,14 @@ class JournalStateStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow"
             store = JournalStateStore.create(path, workflow_value())
-            original = __import__("delegate_agent.store", fromlist=["_atomic_json"])._atomic_json
+            original = __import__("orchestrator_agent.store", fromlist=["_atomic_json"])._atomic_json
 
             def fail_snapshot(snapshot_path, value):
                 if Path(snapshot_path).name == "snapshot.json":
                     raise OSError("simulated snapshot failure")
                 return original(snapshot_path, value)
 
-            with mock.patch("delegate_agent.store._atomic_json", side_effect=fail_snapshot):
+            with mock.patch("orchestrator_agent.store._atomic_json", side_effect=fail_snapshot):
                 with self.assertRaises(OSError):
                     store.transition_task("inspect", "ready", expected_state="pending")
             store.close()

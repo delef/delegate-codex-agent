@@ -4,10 +4,10 @@ import stat
 import tempfile
 import unittest
 
-from delegate_agent.hooks import run_hook
-from delegate_agent.schema import normalize_workflow
-from delegate_agent.store import JournalStateStore
-from delegate_agent.workflow import WorkflowRuntime
+from orchestrator_agent.hooks import run_hook
+from orchestrator_agent.schema import normalize_workflow
+from orchestrator_agent.store import JournalStateStore
+from orchestrator_agent.workflow import WorkflowRuntime
 
 
 class HookTests(unittest.TestCase):

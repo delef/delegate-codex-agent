@@ -3,11 +3,11 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
-from delegate_agent.gates import GateResult
-from delegate_agent.retry import classify_failure
-from delegate_agent.schema import normalize_workflow
-from delegate_agent.scheduler import DurableScheduler
-from delegate_agent.store import JournalStateStore
+from orchestrator_agent.gates import GateResult
+from orchestrator_agent.retry import classify_failure
+from orchestrator_agent.schema import normalize_workflow
+from orchestrator_agent.scheduler import DurableScheduler
+from orchestrator_agent.store import JournalStateStore
 
 
 def workflow_value(max_attempts=2):

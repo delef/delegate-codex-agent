@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from delegate_agent.cli import inspect_workflow  # noqa: E402
+from orchestrator_agent.cli import inspect_workflow  # noqa: E402
 
 
 def render_status(status: dict, *, width: int | None = None) -> str:

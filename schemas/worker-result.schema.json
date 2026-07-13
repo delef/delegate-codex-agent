@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://delegate-codex-agent.local/schemas/worker-result.schema.json",
+  "$id": "https://orchestrator-codex-agent.local/schemas/worker-result.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["result", "evidence", "changes", "verification", "risks", "recommended_next_action"],

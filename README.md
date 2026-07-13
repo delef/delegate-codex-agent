@@ -1,4 +1,4 @@
-# delegate-codex-agent
+# orchestrator-codex-agent
 
 > [!WARNING]
 > This repository is an experimental project for exploring budget-aware Codex delegation. It is not production-ready, and its interfaces, file formats, and behavior may change without notice.
@@ -11,22 +11,22 @@ A Codex skill centered on a deterministic, budget-aware workflow orchestrator. I
 
 ```bash
 python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
-  --repo delef/delegate-codex-agent \
+  --repo delef/orchestrator-codex-agent \
   --path . \
-  --name delegate-codex-agent
+  --name orchestrator-codex-agent
 ```
 
 ### With Git
 
 ```bash
-git clone https://github.com/delef/delegate-codex-agent.git \
-  "${CODEX_HOME:-$HOME/.codex}/skills/delegate-codex-agent"
+git clone https://github.com/delef/orchestrator-codex-agent.git \
+  "${CODEX_HOME:-$HOME/.codex}/skills/orchestrator-codex-agent"
 ```
 
 Verify the installation:
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/delegate-codex-agent/scripts/delegate.py" --help
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/orchestrator-codex-agent/scripts/delegate.py" --help
 ```
 
 The skill will be available to Codex on the next turn. The runner requires Git, Python 3, and the Codex CLI.

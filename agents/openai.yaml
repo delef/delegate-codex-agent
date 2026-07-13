@@ -1,4 +1,4 @@
 interface:
-  display_name: "Delegate Codex Agent"
+  display_name: "Orchestrator Codex Agent"
   short_description: "Route bounded tasks with isolated context"
-  default_prompt: "Use $delegate-codex-agent primarily as a budget-aware acceptance-gated workflow orchestrator; use direct bounded delegation only for one small task. Keep Luna default, Terra evidence-gated, and Sol read-only and opt-in."
+  default_prompt: "Use $orchestrator-codex-agent primarily as a budget-aware acceptance-gated workflow orchestrator; use direct bounded delegation only for one small task. Keep Luna default, Terra evidence-gated, and Sol read-only and opt-in."

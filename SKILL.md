@@ -1,9 +1,9 @@
 ---
-name: delegate-codex-agent
+name: orchestrator-codex-agent
 description: Use when a bounded repository task should move to another Codex model, independent tasks can save supervisor context, or deep analysis should be isolated from the main context window.
 ---
 
-# Delegate Codex Agent
+# Orchestrator Codex Agent
 
 Keep the primary Sol as supervisor and final decision-maker. The skill has two operating modes; the workflow orchestrator is the default for multi-step work, while direct delegation is the lightweight option for one bounded task. A delegated Sol is a read-only thinking delegate, not a replacement for supervision. Never delegate final diff review or supervisor verification.
 
@@ -38,8 +38,8 @@ Preview performs validation, phase/routing estimation, reservation checks, and p
 Use this lightweight mode for one bounded task. Pass a JSON task with `name`, `objective`, `scope`, `context`, `constraints`, `acceptance`, `commands`, and `output`. Applicable `AGENTS.md` and concise git state are added automatically.
 
 ```bash
-python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
-python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
+python3 ~/.codex/skills/orchestrator-codex-agent/scripts/delegate.py prepare --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
+python3 ~/.codex/skills/orchestrator-codex-agent/scripts/delegate.py run --spec /abs/task.json --cwd /abs/repo --model luna --sandbox read-only
 ```
 
 Keep runs in the foreground; poll the same PTY session. Read `DELEGATE_HEARTBEAT`: `active` is fresh, `silent` is alive without recent events, and `stale` requires diagnosis. Never terminate or retry from `silent` alone.
@@ -55,8 +55,8 @@ Shared writers run exclusively. For truly independent writers set `"isolation":"
 Each run persists `status.json`, `packet.md`, `events.jsonl`, `result.md`, structured `result.json`, and local token usage. `batch-status.json` aggregates usage. Exit zero proves transport completion only: inspect results and diff, then run the narrowest independent check.
 
 ```bash
-python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py inspect --run-dir /path/from/output
-python3 ~/.codex/skills/delegate-codex-agent/scripts/delegate.py resume --run-dir /original/run --feedback-file /abs/findings.md
+python3 ~/.codex/skills/orchestrator-codex-agent/scripts/delegate.py inspect --run-dir /path/from/output
+python3 ~/.codex/skills/orchestrator-codex-agent/scripts/delegate.py resume --run-dir /original/run --feedback-file /abs/findings.md
 ```
 
 Resume with findings, evidence, required fixes, and checks only. Failed branches skip dependents while independent branches continue. Refine failures before retrying; never revert partial edits without authorization.

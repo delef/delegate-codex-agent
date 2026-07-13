@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from delegate_agent.cli import prepare_workflow
+from orchestrator_agent.cli import prepare_workflow
 
 
 class PrepareWorkflowTests(unittest.TestCase):

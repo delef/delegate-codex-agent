@@ -3,8 +3,8 @@ import subprocess
 import tempfile
 import unittest
 
-from delegate_agent.errors import StateError
-from delegate_agent.integration import apply_integration_plan, build_integration_plan, capture_writer_changes, plan_digest, write_integration_plan
+from orchestrator_agent.errors import StateError
+from orchestrator_agent.integration import apply_integration_plan, build_integration_plan, capture_writer_changes, plan_digest, write_integration_plan
 
 
 def git(cwd: Path, *args: str) -> str:

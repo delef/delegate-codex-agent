@@ -5,10 +5,10 @@ import subprocess
 import tempfile
 import unittest
 
-from delegate_agent.schema import normalize_workflow
-from delegate_agent.store import JournalStateStore, submit_control_request
-from delegate_agent.conditions import evaluate_condition
-from delegate_agent.workflow import WorkflowRuntime, build_task_prompt
+from orchestrator_agent.schema import normalize_workflow
+from orchestrator_agent.store import JournalStateStore, submit_control_request
+from orchestrator_agent.conditions import evaluate_condition
+from orchestrator_agent.workflow import WorkflowRuntime, build_task_prompt
 
 
 FAKE_CODEX = """#!/usr/bin/env python3
